@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile, stat } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { prepareAttachments, safeErrorMessage } from "./attachments.js";
 import {
   HttpError,
@@ -59,7 +59,7 @@ export default class TestCenterReporter {
     // read-only discovery command rather than leaving an empty pending run behind.
     if (config.argv?.includes("--list") || process.argv.includes("--list")) return;
     this.rootDir = config.rootDir;
-    const settings = this.resolveSettings(config.rootDir);
+    const settings = this.resolveSettings(config);
     if (typeof settings === "string") {
       this.warn(`Publishing disabled: ${settings}`);
       return;
@@ -211,7 +211,7 @@ export default class TestCenterReporter {
     );
   }
 
-  private resolveSettings(rootDir: string): ResolvedSettings | string {
+  private resolveSettings(config: ReporterFullConfig): ResolvedSettings | string {
     const baseUrl = first(this.options.url, process.env.TESTCENTER_URL);
     const token = first(process.env.TESTCENTER_TOKEN);
     const project = first(this.options.project, process.env.TESTCENTER_PROJECT);
@@ -240,7 +240,13 @@ export default class TestCenterReporter {
       baseUrl,
       token,
       project,
-      junitPath: resolve(rootDir, junitFile),
+      // Playwright's rootDir is the test directory, not the directory containing its config.
+      // Built-in reporter output paths are config-relative, so resolve the consumer path the same
+      // way or generated test directories (for example playwright-bdd) silently add a prefix.
+      junitPath: resolve(
+        config.configFile ? dirname(resolve(config.configFile)) : process.cwd(),
+        junitFile,
+      ),
       organization: first(this.options.organization, process.env.TESTCENTER_ORG),
     };
   }

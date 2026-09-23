@@ -56,7 +56,7 @@ starts. If any is missing, the reporter makes no request and prints one warning.
 
 | Option | Environment fallback | Purpose |
 | --- | --- | --- |
-| `junitFile` | — | Required path also used by Playwright's JUnit reporter |
+| `junitFile` | — | Required path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
 | `project` | `TESTCENTER_PROJECT` | Test Center project key |
 | `url` | `TESTCENTER_URL` | Test Center origin |
 | `organization` | `TESTCENTER_ORG` | Organization slug used to print the run URL |

@@ -45,6 +45,7 @@ export interface ReporterTestResult {
 
 export interface ReporterFullConfig {
   rootDir: string;
+  configFile?: string;
   version: string;
   shard: { current: number; total: number } | null;
   argv?: string[];

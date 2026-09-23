@@ -79,7 +79,13 @@ describe("TestCenterReporter", () => {
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
-    reporter.onBegin(config(directory), { allTests: () => [{}, {}] });
+    reporter.onBegin(
+      config(
+        join(directory, "test-results", ".features-gen"),
+        join(directory, "playwright.config.ts"),
+      ),
+      { allTests: () => [{}, {}] },
+    );
     reporter.onTestEnd(testCase(), result());
 
     await mkdir(join(directory, "reports"), { recursive: true });
@@ -185,8 +191,11 @@ describe("TestCenterReporter", () => {
   });
 });
 
-function config(rootDir: string): ReporterFullConfig {
-  return { rootDir, version: "1.62.1", shard: null };
+function config(
+  rootDir: string,
+  configFile = join(rootDir, "playwright.config.ts"),
+): ReporterFullConfig {
+  return { rootDir, configFile, version: "1.62.1", shard: null };
 }
 
 function testCase(): ReporterTestCase {
