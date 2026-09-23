@@ -51,7 +51,15 @@ npx playwright test
 ```
 
 `TESTCENTER_TOKEN`, `TESTCENTER_URL`, and the project key must all resolve before publishing
-starts. If any is missing, the reporter makes no request and prints one warning.
+starts. If any value or the shared `junitFile` option is missing, the reporter makes no request
+and prints an actionable configuration block showing the missing values, the required environment
+variables, the paired Playwright reporter configuration, and a link back to this guide. This is
+warning-only so a developer who intentionally runs without Test Center still gets the original
+Playwright exit code.
+
+The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
+If `@testcenter/playwright` is absent from the reporter list, Playwright never loads it and no
+package code can print a configuration message.
 
 ## Options
 

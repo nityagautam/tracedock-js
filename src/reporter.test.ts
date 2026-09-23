@@ -145,7 +145,12 @@ describe("TestCenterReporter", () => {
     reporter.onBegin(config(directory), { allTests: () => [] });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("missing TESTCENTER_TOKEN"));
+    const output = stderr.mock.calls.flat().join("");
+    expect(output).toContain("Test Center reporter is not configured");
+    expect(output).toContain("Missing configuration: TESTCENTER_TOKEN");
+    expect(output).toContain("TESTCENTER_URL=https://testcenter.example.com");
+    expect(output).toContain("['@testcenter/playwright', { junitFile }]");
+    expect(output).toContain("Setup guide:");
   });
 
   it("does not publish during Playwright test discovery", async () => {

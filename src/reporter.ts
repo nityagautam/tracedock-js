@@ -36,6 +36,9 @@ interface ResolvedSettings {
   organization?: string;
 }
 
+const CONFIGURATION_GUIDE =
+  "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/reporter-playwright#configure";
+
 export default class TestCenterReporter {
   private readonly options: TestCenterReporterOptions;
   private readonly uploads: Semaphore;
@@ -62,7 +65,7 @@ export default class TestCenterReporter {
     this.rootDir = config.rootDir;
     const settings = this.resolveSettings(config);
     if (typeof settings === "string") {
-      this.warn(`Publishing disabled: ${settings}`);
+      this.configurationWarning(settings);
       return;
     }
 
@@ -269,6 +272,33 @@ export default class TestCenterReporter {
 
   private warn(message: string): void {
     process.stderr.write(`[testcenter] Warning: ${safeErrorMessage(message)}\n`);
+  }
+
+  /**
+   * A disabled integration must explain how to enable itself. A bare "missing token" warning is
+   * technically correct but leaves the person running the suite to reverse-engineer both the
+   * environment and the paired JUnit reporter before they can act on it.
+   *
+   * This remains warning-only: local contributors commonly do not publish, and observability
+   * configuration must never turn a passing test suite red.
+   */
+  private configurationWarning(reason: string): void {
+    const lines = [
+      "Test Center reporter is not configured; this run will not be published.",
+      `Missing configuration: ${reason.replace(/^missing\s+/, "")}.`,
+      "Configure the environment:",
+      "  TESTCENTER_URL=https://testcenter.example.com",
+      "  TESTCENTER_TOKEN=tc_...",
+      "  TESTCENTER_PROJECT=checkout-web",
+      "Configure playwright.config.ts with the JUnit and Test Center reporters:",
+      "  const junitFile = 'test-results/junit.xml';",
+      "  reporter: [",
+      "    ['junit', { outputFile: junitFile, includeRetries: true }],",
+      "    ['@testcenter/playwright', { junitFile }],",
+      "  ]",
+      `Setup guide: ${CONFIGURATION_GUIDE}`,
+    ];
+    process.stderr.write(`${lines.map((line) => `[testcenter] ${line}`).join("\n")}\n`);
   }
 
   private output(message: string): void {
