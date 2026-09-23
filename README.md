@@ -1,8 +1,9 @@
 # `@testcenter/playwright`
 
-Publish Playwright JUnit results, screenshots, videos, traces, HAR files and logs to Test Center.
-Evidence is linked to the testcase and retry that produced it. Publishing is warning-only: a Test
-Center or object-storage outage never changes Playwright's exit code.
+Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
+files and logs to Test Center. Evidence is linked to the testcase, retry and originating step that
+produced it. Publishing is warning-only: a Test Center or object-storage outage never changes
+Playwright's exit code.
 
 ## Install
 
@@ -86,6 +87,18 @@ still running, and records Playwright's zero-based retry number.
 
 An evidence failure produces a warning and is reported by Test Center as missing evidence. A JUnit
 failure leaves the run pending rather than completing it with partial results.
+
+## Test steps
+
+Every Playwright step is recorded automatically from `result.steps`: BDD and `test.step` entries,
+assertions, hooks, fixtures, Playwright API calls and attachment steps. Nested steps retain their
+hierarchy; timing, source location, annotations and step errors are preserved per retry. Evidence
+created inside a step renders with that step in the result panel.
+
+The safety ceiling is 5,000 steps per testcase attempt. If a generated or pathological test
+exceeds it, the reporter keeps the first 5,000, prints one warning and continues. This feature is
+reporter-native: manually uploaded JUnit XML has no portable structured-step representation, so it
+continues to ingest normally and simply shows no Test steps section.
 
 ## Sharding
 
