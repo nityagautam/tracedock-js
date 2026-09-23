@@ -146,6 +146,22 @@ describe("TestCenterReporter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("recognizes discovery on Playwright versions that do not expose config.argv", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const originalArguments = process.argv;
+    process.argv = ["node", "playwright", "test", "--list"];
+    try {
+      reporter.onBegin(config(directory), { allTests: () => [{}] });
+      await reporter.onExit();
+    } finally {
+      process.argv = originalArguments;
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("redacts bearer values and signed URLs from failures", async () => {
     vi.stubGlobal(
       "fetch",
