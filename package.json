@@ -1,0 +1,60 @@
+{
+  "name": "@testcenter/playwright",
+  "version": "0.1.0",
+  "description": "Playwright reporter for publishing JUnit results and test evidence to Test Center",
+  "homepage": "https://github.com/nityagautam/TestCenter#readme",
+  "bugs": {
+    "url": "https://github.com/nityagautam/TestCenter/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nityagautam/TestCenter.git",
+    "directory": "src/packages/reporter-playwright"
+  },
+  "keywords": [
+    "playwright",
+    "reporter",
+    "junit",
+    "test-results",
+    "testcenter"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.50.0 <2"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
