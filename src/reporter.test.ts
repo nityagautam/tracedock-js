@@ -47,6 +47,7 @@ describe("TestCenterReporter", () => {
               },
             ],
             attachmentUrl: "/api/v1/runs/run-1/attachment-upload-urls",
+            stepsUrl: "/api/v1/runs/run-1/steps",
             completeUrl: "/api/v1/runs/run-1/complete",
           },
           201,
@@ -68,6 +69,9 @@ describe("TestCenterReporter", () => {
           },
           201,
         );
+      }
+      if (url.endsWith("/steps")) {
+        return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
       }
       if (url === "https://testcenter.example/api/v1/runs/run-1/complete") {
         return jsonResponse({ runId: "run-1", status: "parsing" });
@@ -104,6 +108,13 @@ describe("TestCenterReporter", () => {
     );
 
     const declaration = calls.find(({ url }) => url.endsWith("/attachment-upload-urls"));
+    const stepDeclaration = calls.find(({ url }) => url.endsWith("/steps"));
+    const stepBody = JSON.parse(String(stepDeclaration?.init.body)) as {
+      steps: Array<{ id: string; title: string; category: string }>;
+    };
+    expect(stepBody.steps).toEqual([
+      expect.objectContaining({ title: "Given a saved card", category: "test.step" }),
+    ]);
     expect(JSON.parse(String(declaration?.init.body))).toEqual({
       attachments: [
         expect.objectContaining({
@@ -111,6 +122,7 @@ describe("TestCenterReporter", () => {
           test: "pays with a saved card",
           suite: "specs/checkout.spec.ts",
           attempt: 1,
+          stepId: stepBody.steps[0]?.id,
         }),
       ],
     });
@@ -213,9 +225,25 @@ function testCase(): ReporterTestCase {
 }
 
 function result(): ReporterTestResult {
+  const trace = {
+    name: "trace",
+    contentType: "application/zip",
+    body: Buffer.from("zip body"),
+  };
   return {
     retry: 1,
-    attachments: [{ name: "trace", contentType: "application/zip", body: Buffer.from("zip body") }],
+    attachments: [trace],
+    steps: [
+      {
+        title: "Given a saved card",
+        category: "test.step",
+        duration: 15,
+        startTime: new Date("2026-09-23T10:00:00.000Z"),
+        annotations: [],
+        attachments: [trace],
+        steps: [],
+      },
+    ],
   };
 }
 

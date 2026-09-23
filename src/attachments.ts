@@ -13,6 +13,7 @@ export interface AttachmentDeclaration {
   suite?: string;
   test: string;
   attempt: number;
+  stepId?: string;
 }
 
 export interface PreparedAttachment {
@@ -36,6 +37,7 @@ export async function prepareAttachments(
   result: ReporterTestResult,
   rootDir: string,
   warn: (message: string) => void,
+  stepIdForAttachment?: (attachment: ReporterAttachment) => string | undefined,
 ): Promise<PreparedAttachment[]> {
   const prepared: PreparedAttachment[] = [];
   const identities = new Map<string, number>();
@@ -73,6 +75,7 @@ export async function prepareAttachments(
           ...(suite ? { suite } : {}),
           test: test.title.slice(0, 1000),
           attempt: result.retry,
+          ...(stepIdForAttachment?.(attachment) ? { stepId: stepIdForAttachment(attachment) } : {}),
         },
       });
     } catch (error) {

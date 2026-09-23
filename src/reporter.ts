@@ -10,6 +10,7 @@ import {
   type CreateRunResponse,
 } from "./client.js";
 import { detectMetadata } from "./metadata.js";
+import { prepareSteps } from "./steps.js";
 import type {
   ReporterFullConfig,
   ReporterSuite,
@@ -131,9 +132,9 @@ export default class TestCenterReporter {
   }
 
   onTestEnd(test: ReporterTestCase, result: ReporterTestResult): void {
-    if (!this.runPromise || result.attachments.length === 0) return;
-    const task = this.uploadTestEvidence(this.runPromise, test, result).catch((error: unknown) => {
-      this.warn(`Could not publish evidence for "${test.title}": ${safeErrorMessage(error)}`);
+    if (!this.runPromise || (result.attachments.length === 0 && !result.steps?.length)) return;
+    const task = this.uploadTestDetails(this.runPromise, test, result).catch((error: unknown) => {
+      this.warn(`Could not publish test details for "${test.title}": ${safeErrorMessage(error)}`);
     });
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task));
@@ -180,15 +181,30 @@ export default class TestCenterReporter {
     }
   }
 
-  private async uploadTestEvidence(
+  private async uploadTestDetails(
     runPromise: Promise<ActiveRun | null>,
     test: ReporterTestCase,
     result: ReporterTestResult,
   ): Promise<void> {
     const run = await runPromise;
     if (!run) return;
-    const attachments = await prepareAttachments(test, result, this.rootDir, (message) =>
-      this.warn(message),
+    const steps = prepareSteps(test, result, this.rootDir, (message) => this.warn(message));
+    let stepsDeclared = false;
+    if (steps.batch) {
+      try {
+        await run.client.declareSteps(run.response, steps.batch);
+        stepsDeclared = true;
+      } catch (error) {
+        this.warn(`Could not record steps for "${test.title}": ${safeErrorMessage(error)}`);
+      }
+    }
+
+    const attachments = await prepareAttachments(
+      test,
+      result,
+      this.rootDir,
+      (message) => this.warn(message),
+      stepsDeclared ? steps.stepIdForAttachment : undefined,
     );
     if (attachments.length === 0) return;
 

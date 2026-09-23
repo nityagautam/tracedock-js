@@ -1,4 +1,5 @@
 import type { AttachmentDeclaration } from "./attachments.js";
+import type { StepBatch } from "./steps.js";
 
 export interface PresignedUpload {
   uploadUrl: string;
@@ -21,6 +22,7 @@ export interface CreateRunResponse {
   runId: string;
   uploads: ArtifactUpload[];
   attachmentUrl: string;
+  stepsUrl: string;
   completeUrl: string;
 }
 
@@ -56,6 +58,13 @@ export class TestCenterClient {
     return this.requestJson<{ uploads: AttachmentUpload[] }>(run.attachmentUrl, {
       body: { attachments: declarations },
     });
+  }
+
+  declareSteps(
+    run: CreateRunResponse,
+    batch: StepBatch,
+  ): Promise<{ declared: number; inserted: number }> {
+    return this.requestJson<{ declared: number; inserted: number }>(run.stepsUrl, { body: batch });
   }
 
   async refreshArtifact(runId: string, artifactId: string): Promise<ArtifactUpload> {

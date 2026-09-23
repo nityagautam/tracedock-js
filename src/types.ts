@@ -27,6 +27,23 @@ export interface ReporterAttachment {
   body?: Buffer;
 }
 
+export interface ReporterTestError {
+  message?: string;
+  stack?: string;
+}
+
+export interface ReporterTestStep {
+  title: string;
+  category: string;
+  duration: number;
+  startTime: Date;
+  error?: ReporterTestError;
+  location?: { file: string; line?: number; column?: number };
+  annotations: Array<{ type: string; description?: string }>;
+  attachments: ReporterAttachment[];
+  steps: ReporterTestStep[];
+}
+
 /**
  * The small structural slice of Playwright's public reporter types used at runtime.
  * Keeping it local leaves the published JavaScript dependency-free while the package's peer
@@ -41,6 +58,7 @@ export interface ReporterTestCase {
 export interface ReporterTestResult {
   attachments: ReporterAttachment[];
   retry: number;
+  steps?: ReporterTestStep[];
 }
 
 export interface ReporterFullConfig {
