@@ -130,6 +130,22 @@ describe("TestCenterReporter", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("missing TESTCENTER_TOKEN"));
   });
 
+  it("does not publish during Playwright test discovery", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+
+    reporter.onBegin(
+      { ...config(directory), argv: ["node", "playwright", "test", "--list"] },
+      {
+        allTests: () => [{}],
+      },
+    );
+    await reporter.onExit();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("redacts bearer values and signed URLs from failures", async () => {
     vi.stubGlobal(
       "fetch",

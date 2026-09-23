@@ -47,6 +47,7 @@ export interface ReporterFullConfig {
   rootDir: string;
   version: string;
   shard: { current: number; total: number } | null;
+  argv?: string[];
 }
 
 export interface ReporterSuite {

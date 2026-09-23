@@ -55,6 +55,9 @@ export default class TestCenterReporter {
   }
 
   onBegin(config: ReporterFullConfig, suite: ReporterSuite): void {
+    // `playwright test --list` initializes reporters but executes nothing. It must remain a
+    // read-only discovery command rather than leaving an empty pending run behind.
+    if (config.argv?.includes("--list")) return;
     this.rootDir = config.rootDir;
     const settings = this.resolveSettings(config.rootDir);
     if (typeof settings === "string") {
