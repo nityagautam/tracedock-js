@@ -1,4 +1,5 @@
 import type { AttachmentDeclaration } from "./attachments.js";
+import type { TestPriorityDeclaration } from "./priorities.js";
 import type { StepBatch } from "./steps.js";
 
 export interface PresignedUpload {
@@ -23,6 +24,7 @@ export interface CreateRunResponse {
   uploads: ArtifactUpload[];
   attachmentUrl: string;
   stepsUrl: string;
+  testPrioritiesUrl: string;
   completeUrl: string;
 }
 
@@ -65,6 +67,21 @@ export class TestCenterClient {
     batch: StepBatch,
   ): Promise<{ declared: number; inserted: number }> {
     return this.requestJson<{ declared: number; inserted: number }>(run.stepsUrl, { body: batch });
+  }
+
+  async declareTestPriorities(
+    run: CreateRunResponse,
+    tests: readonly TestPriorityDeclaration[],
+  ): Promise<number> {
+    let declared = 0;
+    for (let offset = 0; offset < tests.length; offset += 1_000) {
+      const chunk = tests.slice(offset, offset + 1_000);
+      const response = await this.requestJson<{ declared: number }>(run.testPrioritiesUrl, {
+        body: { tests: chunk },
+      });
+      declared += response.declared;
+    }
+    return declared;
   }
 
   async refreshArtifact(runId: string, artifactId: string): Promise<ArtifactUpload> {

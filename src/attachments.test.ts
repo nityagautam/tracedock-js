@@ -4,6 +4,7 @@ import type { ReporterTestCase } from "./types.js";
 
 const testCase: ReporterTestCase = {
   title: "declines an expired card",
+  tags: [],
   titlePath: () => [
     "",
     "chromium",

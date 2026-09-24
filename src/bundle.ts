@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PreparedAttachment } from "./attachments.js";
+import type { TestPriorityDeclaration } from "./priorities.js";
 import type { StepBatch } from "./steps.js";
 import type { TestCenterCiOptions } from "./types.js";
 import { writeStoredZip } from "./zip.js";
@@ -60,6 +61,7 @@ export class PortableRunBundle {
       projectHint?: string;
       playwrightVersion: string;
       run: BundleRunMetadata;
+      testPriorities: TestPriorityDeclaration[];
     },
   ) {
     this.bundleId = input.bundleId;
@@ -133,6 +135,7 @@ export class PortableRunBundle {
         bytes: report.bytes,
         sha256: report.sha256,
       },
+      testPriorities: this.input.testPriorities,
       attempts: this.attempts,
     };
     const manifestPath = join(this.stageRoot, "testcenter-bundle.json");

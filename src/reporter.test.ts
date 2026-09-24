@@ -48,6 +48,7 @@ describe("TestCenterReporter", () => {
             ],
             attachmentUrl: "/api/v1/runs/run-1/attachment-upload-urls",
             stepsUrl: "/api/v1/runs/run-1/steps",
+            testPrioritiesUrl: "/api/v1/runs/run-1/test-priorities",
             completeUrl: "/api/v1/runs/run-1/complete",
           },
           201,
@@ -71,6 +72,9 @@ describe("TestCenterReporter", () => {
         );
       }
       if (url.endsWith("/steps")) {
+        return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
+      }
+      if (url.endsWith("/test-priorities")) {
         return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
       }
       if (url === "https://testcenter.example/api/v1/runs/run-1/complete") {
@@ -98,7 +102,7 @@ describe("TestCenterReporter", () => {
         join(directory, "test-results", ".features-gen"),
         join(directory, "playwright.config.ts"),
       ),
-      { allTests: () => [{}, {}] },
+      { allTests: () => [testCase(["@p0"]), testCase(["@p0"])] },
     );
     reporter.onTestEnd(testCase(), result());
 
@@ -131,6 +135,7 @@ describe("TestCenterReporter", () => {
 
     const declaration = calls.find(({ url }) => url.endsWith("/attachment-upload-urls"));
     const stepDeclaration = calls.find(({ url }) => url.endsWith("/steps"));
+    const priorityDeclaration = calls.find(({ url }) => url.endsWith("/test-priorities"));
     const stepBody = JSON.parse(String(stepDeclaration?.init.body)) as {
       steps: Array<{ id: string; title: string; category: string }>;
     };
@@ -146,6 +151,15 @@ describe("TestCenterReporter", () => {
           attempt: 1,
           stepId: stepBody.steps[0]?.id,
         }),
+      ],
+    });
+    expect(JSON.parse(String(priorityDeclaration?.init.body))).toEqual({
+      tests: [
+        {
+          suite: "specs/checkout.spec.ts",
+          test: "pays with a saved card",
+          priority: "P0",
+        },
       ],
     });
 
@@ -165,6 +179,7 @@ describe("TestCenterReporter", () => {
     expect(storedText).toContain("testcenter-bundle.json");
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
+    expect(storedText).toContain('"priority": "P0"');
     expect(storedText).toContain("zip body");
   });
 
@@ -180,7 +195,7 @@ describe("TestCenterReporter", () => {
       bundle: { outputDir: "portable-output" },
     });
     reporter.onBegin(config(directory, join(directory, "playwright.config.ts")), {
-      allTests: () => [{}],
+      allTests: () => [testCase()],
     });
     await mkdir(join(directory, "reports"), { recursive: true });
     await writeFile(
@@ -246,7 +261,7 @@ describe("TestCenterReporter", () => {
     reporter.onBegin(
       { ...config(directory), argv: ["node", "playwright", "test", "--list"] },
       {
-        allTests: () => [{}],
+        allTests: () => [testCase()],
       },
     );
     await reporter.onExit();
@@ -261,7 +276,7 @@ describe("TestCenterReporter", () => {
     const originalArguments = process.argv;
     process.argv = ["node", "playwright", "test", "--list"];
     try {
-      reporter.onBegin(config(directory), { allTests: () => [{}] });
+      reporter.onBegin(config(directory), { allTests: () => [testCase()] });
       await reporter.onExit();
     } finally {
       process.argv = originalArguments;
@@ -300,9 +315,10 @@ function config(
   return { rootDir, configFile, version: "1.62.1", shard: null };
 }
 
-function testCase(): ReporterTestCase {
+function testCase(tags: string[] = []): ReporterTestCase {
   return {
     title: "pays with a saved card",
+    tags,
     titlePath: () => [
       "",
       "chromium",

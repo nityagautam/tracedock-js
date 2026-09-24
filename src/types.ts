@@ -45,6 +45,8 @@ export interface TestCenterReporterOptions {
   /** Explicit CI fields override TESTCENTER_CI_* and provider-detected values. */
   ci?: TestCenterCiOptions;
   tags?: Record<string, string>;
+  /** Detect @p0–@p3 Playwright tags and synchronize testcase priority. Defaults to true. */
+  priority?: { fromTags?: boolean };
   /** Maximum simultaneous object-store PUTs. Defaults to 3. */
   uploadConcurrency?: number;
   /** Portable ZIP output. Defaults to always, beside junitFile in testcenter-bundles/. */
@@ -85,6 +87,7 @@ export interface ReporterTestStep {
  */
 export interface ReporterTestCase {
   title: string;
+  tags: string[];
   titlePath(): string[];
   location: { file: string };
 }
@@ -104,5 +107,5 @@ export interface ReporterFullConfig {
 }
 
 export interface ReporterSuite {
-  allTests(): Array<unknown>;
+  allTests(): ReporterTestCase[];
 }

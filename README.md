@@ -32,6 +32,8 @@ export default defineConfig({
         name: "checkout-e2e",
         // This is the default; shown here to make the resulting run name explicit.
         namePattern: "{name}-{timestamp}",
+        // Optional; @p0 through @p3 are synchronized by default.
+        priority: { fromTags: true },
         // Optional. Defaults to test-results/testcenter-bundles beside junit.xml.
         bundle: { outputDir: "test-results/testcenter-bundles" },
       },
@@ -100,6 +102,7 @@ package code can print a configuration message.
 | `pullRequest`       | `TESTCENTER_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                                 |
 | `ci`                | `TESTCENTER_CI_*`, then detected CI metadata | Build, job and pipeline context                                                                                     |
 | `tags`              | —                                            | Run tags                                                                                                            |
+| `priority.fromTags` | `TESTCENTER_PRIORITY_FROM_TAGS`              | Synchronize exact `@p0`–`@p3` Playwright tags; enabled by default                                                   |
 | `uploadConcurrency` | —                                            | Concurrent evidence uploads, from 1 to 16; default 3                                                                |
 | `bundle.mode`       | `TESTCENTER_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
 | `bundle.outputDir`  | `TESTCENTER_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `testcenter-bundles` beside the configured JUnit file                                 |
@@ -155,6 +158,28 @@ job and URL fields cannot be resolved, the reporter prints one actionable config
 and continues publishing with the available values. This has the same warning-only behavior as
 the basic configuration check: missing observability metadata never changes Playwright's result.
 
+## Test priorities
+
+Add one exact `@p0`, `@p1`, `@p2` or `@p3` tag to a Playwright test or suite. Matching is
+case-insensitive, and inherited suite tags are included by Playwright:
+
+```ts
+test("card payment", { tag: "@p0" }, async ({ page }) => {
+  // ...
+});
+```
+
+The reporter declares every selected test, including tests with no priority tag. That lets a later
+run clear an older reporter-managed priority when its tag is removed. A non-null priority chosen in
+the Test Center UI is an explicit manual override and is never replaced; clearing it allows the
+next reporter run to restore the source tag. Conflicting tags such as `@p0` and `@p2` produce a
+warning; the first tag in Playwright's resolved order wins and the others are ignored.
+
+Prefer the `tag` metadata above instead of embedding `@p0` in the test title. Playwright exposes
+both, but changing a title changes Test Center's testcase identity. Use
+`priority: { fromTags: false }` or `TESTCENTER_PRIORITY_FROM_TAGS=false` to disable synchronization.
+Ordinary JUnit uploads remain supported and do not declare priorities automatically.
+
 ## Evidence behavior
 
 The reporter consumes `result.attachments` directly, so it does not infer testcase identity from
@@ -185,8 +210,8 @@ continues to ingest normally and simply shows no Test steps section.
 ## Portable run ZIP
 
 Every execution produces one `<run-name>.testcenter-run.zip` by default. The archive contains the
-finished JUnit XML, run and CI metadata, every structured step, retries, evidence files, and the
-exact testcase/attempt/step relationship for each file. It contains no API token, cookie,
+finished JUnit XML, run and CI metadata, tag-derived testcase priorities, every structured step,
+retries, evidence files, and the exact testcase/attempt/step relationship for each file. It contains no API token, cookie,
 presigned URL, or Test Center credential.
 
 The default directory is `testcenter-bundles` beside `junitFile`. Choose another location in the
@@ -211,8 +236,8 @@ is incomplete. `off` disables local staging and ZIP creation. The equivalent env
 are `TESTCENTER_BUNDLE_MODE` and `TESTCENTER_BUNDLE_OUTPUT_DIR`.
 
 To publish later, open the target project's **Upload** page and select the ZIP by itself. Test
-Center validates it in the background and restores the same results, steps, retries and evidence
-as the live reporter. Re-importing the same bundle repairs or returns the original run instead of
+Center validates it in the background and restores the same results, priorities, steps, retries
+and evidence as the live reporter. Re-importing the same bundle repairs or returns the original run instead of
 appending duplicate evidence.
 
 ## Sharding

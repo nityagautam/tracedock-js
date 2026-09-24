@@ -9,6 +9,7 @@ import type {
 
 const test: ReporterTestCase = {
   title: "checks out",
+  tags: [],
   titlePath: () => ["", "chromium", "specs/checkout.spec.ts", "Checkout", "checks out"],
   location: { file: "/repo/specs/checkout.spec.ts" },
 };

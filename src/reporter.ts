@@ -11,6 +11,7 @@ import {
   type CreateRunResponse,
 } from "./client.js";
 import { detectMetadata, resolveCiContext } from "./metadata.js";
+import { prepareTestPriorities, priorityTagsEnabled } from "./priorities.js";
 import { formatRunName } from "./run-name.js";
 import { prepareSteps } from "./steps.js";
 import type {
@@ -80,6 +81,13 @@ export default class TestCenterReporter {
       return;
     }
     this.junitPath = paths.junitPath;
+    const allTests = suite.allTests();
+    const testPriorities = priorityTagsEnabled(
+      this.options.priority?.fromTags,
+      process.env.TESTCENTER_PRIORITY_FROM_TAGS,
+    )
+      ? prepareTestPriorities(allTests, this.rootDir, (message) => this.warn(message))
+      : [];
 
     const detected = detectMetadata(process.env);
     const startedAt = new Date();
@@ -134,9 +142,10 @@ export default class TestCenterReporter {
           tags: normalizeTags({
             ...this.options.tags,
             "playwright-version": config.version,
-            "test-count": String(suite.allTests().length),
+            "test-count": String(allTests.length),
           }),
         }),
+        testPriorities,
       });
     }
     if (typeof publishSettings === "string") {
@@ -161,7 +170,7 @@ export default class TestCenterReporter {
       tags: normalizeTags({
         ...this.options.tags,
         "playwright-version": config.version,
-        "test-count": String(suite.allTests().length),
+        "test-count": String(allTests.length),
       }),
       sourceBundleId: bundleId,
       artifacts: [{ filename: artifactName, contentType: "application/xml", format: "junit-xml" }],
@@ -169,9 +178,17 @@ export default class TestCenterReporter {
 
     this.runPromise = client
       .createRun(removeUndefined(body), bundleId)
-      .then((response) => {
+      .then(async (response) => {
         const reportUpload = response.uploads[0];
         if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
+        if (testPriorities.length > 0) {
+          try {
+            await client.declareTestPriorities(response, testPriorities);
+          } catch (error) {
+            this.publishFailed = true;
+            this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
+          }
+        }
         return {
           client,
           response,
