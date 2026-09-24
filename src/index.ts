@@ -1,2 +1,6 @@
 export { default } from "./reporter.js";
-export type { TestCenterReporterOptions } from "./types.js";
+export type {
+  TestCenterCiOptions,
+  TestCenterCiProvider,
+  TestCenterReporterOptions,
+} from "./types.js";

@@ -1,5 +1,29 @@
 import type { Buffer } from "node:buffer";
 
+export type TestCenterCiProvider =
+  | "github"
+  | "gitlab"
+  | "jenkins"
+  | "circleci"
+  | "buildkite"
+  | "azure"
+  | "bitbucket"
+  | "teamcity"
+  | "local"
+  | "unknown";
+
+export interface TestCenterCiOptions {
+  provider?: TestCenterCiProvider;
+  buildId?: string;
+  buildNumber?: string;
+  jobName?: string;
+  jobUrl?: string;
+  pipelineName?: string;
+  pipelineUrl?: string;
+  actor?: string;
+  triggerEvent?: string;
+}
+
 /** Options are safe to commit. The API token is intentionally environment-only. */
 export interface TestCenterReporterOptions {
   /** Test Center project key. Falls back to TESTCENTER_PROJECT. */
@@ -10,11 +34,16 @@ export interface TestCenterReporterOptions {
   url?: string;
   /** Optional organization slug used only to print the final browser URL. */
   organization?: string;
+  /** Base run name. Falls back to TESTCENTER_RUN_NAME, then the detected CI build. */
   name?: string;
+  /** Supports {name} and {timestamp}. Defaults to "{name}-{timestamp}". */
+  namePattern?: string;
   environment?: string;
   branch?: string;
   commitSha?: string;
   pullRequest?: number;
+  /** Explicit CI fields override TESTCENTER_CI_* and provider-detected values. */
+  ci?: TestCenterCiOptions;
   tags?: Record<string, string>;
   /** Maximum simultaneous object-store PUTs. Defaults to 3. */
   uploadConcurrency?: number;

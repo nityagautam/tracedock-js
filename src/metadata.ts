@@ -1,16 +1,7 @@
-export type CiProvider =
-  "github" | "gitlab" | "jenkins" | "circleci" | "buildkite" | "azure" | "bitbucket" | "teamcity";
+import type { TestCenterCiOptions, TestCenterCiProvider } from "./types.js";
 
-export interface CiContext {
-  provider: CiProvider;
-  buildId?: string;
-  buildNumber?: string;
-  jobName?: string;
-  jobUrl?: string;
-  pipelineName?: string;
-  pipelineUrl?: string;
-  actor?: string;
-  triggerEvent?: string;
+export interface CiContext extends TestCenterCiOptions {
+  provider: TestCenterCiProvider;
 }
 
 export interface DetectedMetadata {
@@ -21,6 +12,19 @@ export interface DetectedMetadata {
 }
 
 type Environment = NodeJS.ProcessEnv;
+
+const CI_PROVIDERS = new Set<TestCenterCiProvider>([
+  "github",
+  "gitlab",
+  "jenkins",
+  "circleci",
+  "buildkite",
+  "azure",
+  "bitbucket",
+  "teamcity",
+  "local",
+  "unknown",
+]);
 
 /** Detects the common CI providers without invoking git or vendor SDKs. */
 export function detectMetadata(env: Environment): DetectedMetadata {
@@ -38,6 +42,52 @@ export function detectMetadata(env: Environment): DetectedMetadata {
     commitSha: first(env.TESTCENTER_COMMIT_SHA, env.GIT_COMMIT),
     pullRequest: positiveInteger(env.TESTCENTER_PULL_REQUEST),
   });
+}
+
+/**
+ * CI systems with native variables need no configuration, while custom runners can supply the
+ * same fields through stable Test Center names. Merge per field so adding one override (usually a
+ * friendlier job name) does not discard the URLs and build identifiers detected from the provider.
+ */
+export function resolveCiContext(
+  configured: TestCenterCiOptions | undefined,
+  env: Environment,
+  detected: CiContext | undefined,
+): TestCenterCiOptions | undefined {
+  const resolved = removeUndefined<TestCenterCiOptions>({
+    provider: configured?.provider ?? ciProvider(env.TESTCENTER_CI_PROVIDER) ?? detected?.provider,
+    buildId: first(configured?.buildId, env.TESTCENTER_CI_BUILD_ID, detected?.buildId),
+    buildNumber: first(
+      configured?.buildNumber,
+      env.TESTCENTER_CI_BUILD_NUMBER,
+      detected?.buildNumber,
+    ),
+    jobName: first(configured?.jobName, env.TESTCENTER_CI_JOB_NAME, detected?.jobName),
+    jobUrl: first(configured?.jobUrl, env.TESTCENTER_CI_JOB_URL, detected?.jobUrl),
+    pipelineName: first(
+      configured?.pipelineName,
+      env.TESTCENTER_CI_PIPELINE_NAME,
+      env.TESTCENTER_CI_BUILD_NAME,
+      detected?.pipelineName,
+    ),
+    pipelineUrl: first(
+      configured?.pipelineUrl,
+      env.TESTCENTER_CI_PIPELINE_URL,
+      detected?.pipelineUrl,
+    ),
+    actor: first(
+      configured?.actor,
+      env.TESTCENTER_CI_ACTOR,
+      env.TESTCENTER_CI_TRIGGERED_BY,
+      detected?.actor,
+    ),
+    triggerEvent: first(
+      configured?.triggerEvent,
+      env.TESTCENTER_CI_TRIGGER_EVENT,
+      detected?.triggerEvent,
+    ),
+  });
+  return Object.keys(resolved).length > 0 ? resolved : undefined;
 }
 
 function githubMetadata(env: Environment): DetectedMetadata {
@@ -210,6 +260,11 @@ function positiveInteger(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function ciProvider(value: string | undefined): TestCenterCiProvider | undefined {
+  const normalized = value?.trim().toLowerCase() as TestCenterCiProvider | undefined;
+  return normalized && CI_PROVIDERS.has(normalized) ? normalized : undefined;
 }
 
 function compactMetadata(input: DetectedMetadata): DetectedMetadata {

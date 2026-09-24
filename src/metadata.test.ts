@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectMetadata } from "./metadata.js";
+import { detectMetadata, resolveCiContext } from "./metadata.js";
 
 describe("CI metadata detection", () => {
   it("maps GitHub Actions metadata", () => {
@@ -54,5 +54,33 @@ describe("CI metadata detection", () => {
         pipelineUrl: "https://dev.azure.com/acme/Checkout%20Platform/_build/results?buildId=321",
       }),
     );
+  });
+
+  it("merges config and generic environment values over detected CI metadata", () => {
+    expect(
+      resolveCiContext(
+        { jobName: "Configured browser tests" },
+        {
+          TESTCENTER_CI_BUILD_NUMBER: "84",
+          TESTCENTER_CI_BUILD_NAME: "Nightly regression",
+          TESTCENTER_CI_JOB_URL: "https://ci.example/jobs/84",
+        },
+        {
+          provider: "github",
+          buildId: "9001",
+          buildNumber: "42",
+          jobName: "playwright",
+          pipelineUrl: "https://github.example/acme/checkout/actions/runs/9001",
+        },
+      ),
+    ).toEqual({
+      provider: "github",
+      buildId: "9001",
+      buildNumber: "84",
+      jobName: "Configured browser tests",
+      jobUrl: "https://ci.example/jobs/84",
+      pipelineName: "Nightly regression",
+      pipelineUrl: "https://github.example/acme/checkout/actions/runs/9001",
+    });
   });
 });

@@ -9,13 +9,15 @@ import {
   type ArtifactUpload,
   type CreateRunResponse,
 } from "./client.js";
-import { detectMetadata } from "./metadata.js";
+import { detectMetadata, resolveCiContext } from "./metadata.js";
+import { formatRunName } from "./run-name.js";
 import { prepareSteps } from "./steps.js";
 import type {
   ReporterFullConfig,
   ReporterSuite,
   ReporterTestCase,
   ReporterTestResult,
+  TestCenterCiOptions,
   TestCenterReporterOptions,
 } from "./types.js";
 
@@ -70,6 +72,7 @@ export default class TestCenterReporter {
     }
 
     const detected = detectMetadata(process.env);
+    const startedAt = new Date();
     const branch = this.options.branch ?? process.env.TESTCENTER_BRANCH ?? detected.branch;
     const commitSha =
       this.options.commitSha ?? process.env.TESTCENTER_COMMIT_SHA ?? detected.commitSha;
@@ -77,13 +80,10 @@ export default class TestCenterReporter {
       this.options.pullRequest ??
       positiveInteger(process.env.TESTCENTER_PULL_REQUEST) ??
       detected.pullRequest;
+    const ci = resolveCiContext(this.options.ci, process.env, detected.ci);
     const shard = config.shard
       ? {
-          groupId: first(
-            process.env.TESTCENTER_SHARD_GROUP,
-            detected.ci?.buildId,
-            randomUUID(),
-          ) as string,
+          groupId: first(process.env.TESTCENTER_SHARD_GROUP, ci?.buildId, randomUUID()) as string,
           index: config.shard.current - 1,
           total: config.shard.total,
         }
@@ -91,20 +91,25 @@ export default class TestCenterReporter {
 
     const client = new TestCenterClient(settings.baseUrl, settings.token);
     const artifactName = basename(settings.junitPath);
+    const configuredRunName = first(this.options.name, process.env.TESTCENTER_RUN_NAME);
+    const baseRunName = configuredRunName ?? defaultRunName(ci?.buildNumber);
+    const runName = formatRunName(
+      baseRunName,
+      startedAt,
+      first(this.options.namePattern, process.env.TESTCENTER_RUN_NAME_PATTERN),
+    );
+    const missingContext = missingRunContext(configuredRunName, ci);
+    if (missingContext.length > 0) this.runContextWarning(missingContext, runName);
     const body = {
       project: settings.project,
-      name: first(
-        this.options.name,
-        process.env.TESTCENTER_RUN_NAME,
-        defaultRunName(detected.ci?.buildNumber),
-      ),
+      name: runName,
       framework: "playwright",
       environment: first(this.options.environment, process.env.TESTCENTER_ENVIRONMENT),
       branch,
       commitSha,
       pullRequest,
-      startedAt: new Date().toISOString(),
-      ci: detected.ci,
+      startedAt: startedAt.toISOString(),
+      ci,
       shard,
       tags: normalizeTags({
         ...this.options.tags,
@@ -290,12 +295,31 @@ export default class TestCenterReporter {
       "  TESTCENTER_URL=https://testcenter.example.com",
       "  TESTCENTER_TOKEN=tc_...",
       "  TESTCENTER_PROJECT=checkout-web",
+      "Configure run and CI context (recommended):",
+      "  TESTCENTER_RUN_NAME=checkout-e2e",
+      "  TESTCENTER_CI_PROVIDER=github",
+      "  TESTCENTER_CI_BUILD_NUMBER=84",
+      "  TESTCENTER_CI_PIPELINE_NAME='Nightly regression'",
+      "  TESTCENTER_CI_JOB_NAME=playwright-chromium",
+      "  TESTCENTER_CI_JOB_URL=https://ci.example/jobs/12001",
       "Configure playwright.config.ts with the JUnit and Test Center reporters:",
       "  const junitFile = 'test-results/junit.xml';",
       "  reporter: [",
       "    ['junit', { outputFile: junitFile, includeRetries: true }],",
       "    ['@testcenter/playwright', { junitFile }],",
       "  ]",
+      `Setup guide: ${CONFIGURATION_GUIDE}`,
+    ];
+    process.stderr.write(`${lines.map((line) => `[testcenter] ${line}`).join("\n")}\n`);
+  }
+
+  /** Missing labels should be discoverable without making observability break the test command. */
+  private runContextWarning(missing: readonly string[], runName: string): void {
+    const lines = [
+      "Test Center run context is incomplete; publishing will continue.",
+      `Missing configuration: ${missing.join(", ")}.`,
+      `Run name for this publication: ${runName}.`,
+      "Set reporter options (name, ci) or the corresponding TESTCENTER_RUN_NAME and TESTCENTER_CI_* environment variables.",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
     process.stderr.write(`${lines.map((line) => `[testcenter] ${line}`).join("\n")}\n`);
@@ -324,6 +348,24 @@ function browserRunUrl(run: ActiveRun): string | undefined {
 
 function defaultRunName(buildNumber: string | undefined): string {
   return buildNumber ? `Playwright build ${buildNumber}` : "Playwright run";
+}
+
+function missingRunContext(
+  configuredRunName: string | undefined,
+  ci: TestCenterCiOptions | undefined,
+): string[] {
+  return [
+    !configuredRunName ? "TESTCENTER_RUN_NAME (or reporter name option)" : undefined,
+    !ci?.provider ? "TESTCENTER_CI_PROVIDER" : undefined,
+    !ci?.buildId && !ci?.buildNumber
+      ? "TESTCENTER_CI_BUILD_ID or TESTCENTER_CI_BUILD_NUMBER"
+      : undefined,
+    !ci?.pipelineName ? "TESTCENTER_CI_PIPELINE_NAME (or TESTCENTER_CI_BUILD_NAME)" : undefined,
+    !ci?.jobName ? "TESTCENTER_CI_JOB_NAME" : undefined,
+    !ci?.jobUrl && !ci?.pipelineUrl
+      ? "TESTCENTER_CI_JOB_URL or TESTCENTER_CI_PIPELINE_URL"
+      : undefined,
+  ].filter((value): value is string => value !== undefined);
 }
 
 function positiveInteger(value: string | undefined): number | undefined {

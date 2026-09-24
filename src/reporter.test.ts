@@ -82,7 +82,17 @@ describe("TestCenterReporter", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TestCenterReporter({
+      junitFile: "reports/junit.xml",
+      name: "Checkout E2E",
+      ci: {
+        provider: "unknown",
+        buildNumber: "84",
+        pipelineName: "Nightly regression",
+        jobName: "playwright-chromium",
+        jobUrl: "https://ci.example/jobs/12001",
+      },
+    });
     reporter.onBegin(
       config(
         join(directory, "test-results", ".features-gen"),
@@ -103,9 +113,18 @@ describe("TestCenterReporter", () => {
     expect(create?.init.headers).toEqual(
       expect.objectContaining({ authorization: "Bearer super-secret-token" }),
     );
-    expect(JSON.parse(String(create?.init.body))).toEqual(
+    const createBody = JSON.parse(String(create?.init.body)) as Record<string, unknown>;
+    expect(createBody).toEqual(
       expect.objectContaining({ project: "checkout-web", framework: "playwright" }),
     );
+    expect(createBody.name).toMatch(/^Checkout E2E-\d{8}T\d{9}Z$/);
+    expect(createBody.ci).toEqual({
+      provider: "unknown",
+      buildNumber: "84",
+      pipelineName: "Nightly regression",
+      jobName: "playwright-chromium",
+      jobUrl: "https://ci.example/jobs/12001",
+    });
 
     const declaration = calls.find(({ url }) => url.endsWith("/attachment-upload-urls"));
     const stepDeclaration = calls.find(({ url }) => url.endsWith("/steps"));
@@ -149,8 +168,33 @@ describe("TestCenterReporter", () => {
     expect(output).toContain("Test Center reporter is not configured");
     expect(output).toContain("Missing configuration: TESTCENTER_TOKEN");
     expect(output).toContain("TESTCENTER_URL=https://testcenter.example.com");
+    expect(output).toContain("TESTCENTER_RUN_NAME=checkout-e2e");
+    expect(output).toContain("TESTCENTER_CI_JOB_URL=https://ci.example/jobs/12001");
     expect(output).toContain("['@testcenter/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
+  });
+
+  it("reports missing run and CI context without blocking publication", () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Promise<Response>(() => {
+          // This test only verifies the advisory emitted synchronously by onBegin.
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    reporter.onBegin(config(directory), { allTests: () => [] });
+
+    const output = stderr.mock.calls.flat().join("");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(output).toContain("Test Center run context is incomplete; publishing will continue");
+    expect(output).toContain("TESTCENTER_RUN_NAME (or reporter name option)");
+    expect(output).toContain("TESTCENTER_CI_BUILD_ID or TESTCENTER_CI_BUILD_NUMBER");
+    expect(output).toContain("TESTCENTER_CI_JOB_NAME");
+    expect(output).toContain("TESTCENTER_CI_JOB_URL or TESTCENTER_CI_PIPELINE_URL");
+    expect(output).toMatch(/Run name for this publication: Playwright run-\d{8}T\d{9}Z/);
   });
 
   it("does not publish during Playwright test discovery", async () => {
