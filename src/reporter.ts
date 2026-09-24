@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile, stat } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { prepareAttachments, safeErrorMessage } from "./attachments.js";
+import { PortableRunBundle, resolveBundleMode, type BundleMode } from "./bundle.js";
 import {
   HttpError,
   Semaphore,
@@ -30,12 +31,17 @@ interface ActiveRun {
   baseUrl: string;
 }
 
-interface ResolvedSettings {
+interface PublishSettings {
   baseUrl: string;
   token: string;
   project: string;
-  junitPath: string;
   organization?: string;
+}
+
+interface ResolvedPaths {
+  junitPath: string;
+  bundleMode: BundleMode;
+  bundleOutputDirectory: string;
 }
 
 const CONFIGURATION_GUIDE =
@@ -47,6 +53,9 @@ export default class TestCenterReporter {
   private runPromise: Promise<ActiveRun | null> | undefined;
   private readonly pending = new Set<Promise<void>>();
   private rootDir = process.cwd();
+  private junitPath: string | undefined;
+  private bundle: PortableRunBundle | undefined;
+  private publishFailed = false;
 
   constructor(options: TestCenterReporterOptions = { junitFile: "" }) {
     this.options = options;
@@ -65,11 +74,12 @@ export default class TestCenterReporter {
     // read-only discovery command rather than leaving an empty pending run behind.
     if (config.argv?.includes("--list") || process.argv.includes("--list")) return;
     this.rootDir = config.rootDir;
-    const settings = this.resolveSettings(config);
-    if (typeof settings === "string") {
-      this.configurationWarning(settings);
+    const paths = this.resolvePaths(config);
+    if (typeof paths === "string") {
+      this.configurationWarning(paths);
       return;
     }
+    this.junitPath = paths.junitPath;
 
     const detected = detectMetadata(process.env);
     const startedAt = new Date();
@@ -89,8 +99,6 @@ export default class TestCenterReporter {
         }
       : undefined;
 
-    const client = new TestCenterClient(settings.baseUrl, settings.token);
-    const artifactName = basename(settings.junitPath);
     const configuredRunName = first(this.options.name, process.env.TESTCENTER_RUN_NAME);
     const baseRunName = configuredRunName ?? defaultRunName(ci?.buildNumber);
     const runName = formatRunName(
@@ -100,8 +108,47 @@ export default class TestCenterReporter {
     );
     const missingContext = missingRunContext(configuredRunName, ci);
     if (missingContext.length > 0) this.runContextWarning(missingContext, runName);
+    const bundleId = randomUUID();
+    const publishSettings = this.resolvePublishSettings();
+    const projectHint =
+      typeof publishSettings === "string"
+        ? first(this.options.project, process.env.TESTCENTER_PROJECT)
+        : publishSettings.project;
+    if (paths.bundleMode !== "off") {
+      this.bundle = new PortableRunBundle({
+        bundleId,
+        mode: paths.bundleMode,
+        outputDirectory: paths.bundleOutputDirectory,
+        projectHint,
+        playwrightVersion: config.version,
+        run: removeUndefined({
+          name: runName,
+          framework: "playwright" as const,
+          environment: first(this.options.environment, process.env.TESTCENTER_ENVIRONMENT),
+          branch,
+          commitSha,
+          pullRequest,
+          startedAt: startedAt.toISOString(),
+          ci,
+          shard,
+          tags: normalizeTags({
+            ...this.options.tags,
+            "playwright-version": config.version,
+            "test-count": String(suite.allTests().length),
+          }),
+        }),
+      });
+    }
+    if (typeof publishSettings === "string") {
+      this.publishFailed = true;
+      this.configurationWarning(publishSettings);
+      return;
+    }
+
+    const client = new TestCenterClient(publishSettings.baseUrl, publishSettings.token);
+    const artifactName = basename(paths.junitPath);
     const body = {
-      project: settings.project,
+      project: publishSettings.project,
       name: runName,
       framework: "playwright",
       environment: first(this.options.environment, process.env.TESTCENTER_ENVIRONMENT),
@@ -116,11 +163,12 @@ export default class TestCenterReporter {
         "playwright-version": config.version,
         "test-count": String(suite.allTests().length),
       }),
+      sourceBundleId: bundleId,
       artifacts: [{ filename: artifactName, contentType: "application/xml", format: "junit-xml" }],
     };
 
     this.runPromise = client
-      .createRun(removeUndefined(body), randomUUID())
+      .createRun(removeUndefined(body), bundleId)
       .then((response) => {
         const reportUpload = response.uploads[0];
         if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
@@ -128,21 +176,27 @@ export default class TestCenterReporter {
           client,
           response,
           reportUpload,
-          junitPath: settings.junitPath,
-          organization: settings.organization,
-          baseUrl: settings.baseUrl,
+          junitPath: paths.junitPath,
+          organization: publishSettings.organization,
+          baseUrl: publishSettings.baseUrl,
         };
       })
       .catch((error: unknown) => {
+        this.publishFailed = true;
         this.warn(`Could not create the run: ${safeErrorMessage(error)}`);
         return null;
       });
   }
 
   onTestEnd(test: ReporterTestCase, result: ReporterTestResult): void {
-    if (!this.runPromise || (result.attachments.length === 0 && !result.steps?.length)) return;
-    const task = this.uploadTestDetails(this.runPromise, test, result).catch((error: unknown) => {
-      this.warn(`Could not publish test details for "${test.title}": ${safeErrorMessage(error)}`);
+    if (
+      (!this.runPromise && !this.bundle) ||
+      (result.attachments.length === 0 && !result.steps?.length)
+    )
+      return;
+    const task = this.captureAndPublishTestDetails(test, result).catch((error: unknown) => {
+      this.publishFailed = true;
+      this.warn(`Could not capture test details for "${test.title}": ${safeErrorMessage(error)}`);
     });
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task));
@@ -153,101 +207,137 @@ export default class TestCenterReporter {
    * makes it safe to consume the built-in JUnit reporter's file, including any later enrichment.
    */
   async onExit(): Promise<void> {
-    if (!this.runPromise) return;
-    const run = await this.runPromise;
     await Promise.allSettled([...this.pending]);
-    if (!run) return;
+    const run = this.runPromise ? await this.runPromise : null;
+    const junitPath = this.junitPath;
+    if (!junitPath) return;
 
-    try {
-      const metadata = await stat(run.junitPath);
-      if (!metadata.isFile() || metadata.size === 0) {
-        throw new Error(`JUnit report is missing or empty: ${run.junitPath}`);
-      }
-      const report = await readFile(run.junitPath);
-
-      let upload = run.reportUpload;
-      if (run.client.isNearExpiry(upload)) {
-        upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
-      }
+    if (run) {
       try {
-        await run.client.put(upload, report);
-      } catch (error) {
-        if (!(error instanceof HttpError) || ![401, 403].includes(error.status)) throw error;
-        upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
-        await run.client.put(upload, report);
-      }
+        const metadata = await stat(junitPath);
+        if (!metadata.isFile() || metadata.size === 0) {
+          throw new Error(`JUnit report is missing or empty: ${junitPath}`);
+        }
+        const report = await readFile(junitPath);
 
-      const completed = await run.client.complete(run.response);
-      if (completed.missingAttachments && completed.missingAttachments.length > 0) {
-        this.warn(`${completed.missingAttachments.length} evidence upload(s) are missing.`);
+        let upload = run.reportUpload;
+        if (run.client.isNearExpiry(upload)) {
+          upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
+        }
+        try {
+          await run.client.put(upload, report);
+        } catch (error) {
+          if (!(error instanceof HttpError) || ![401, 403].includes(error.status)) throw error;
+          upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
+          await run.client.put(upload, report);
+        }
+
+        const completed = await run.client.complete(run.response);
+        if (completed.missingAttachments && completed.missingAttachments.length > 0) {
+          this.publishFailed = true;
+          this.warn(`${completed.missingAttachments.length} evidence upload(s) are missing.`);
+        }
+        const runUrl = browserRunUrl(run);
+        this.output(runUrl ? `Published run: ${runUrl}` : `Published run ${run.response.runId}.`);
+        if (runUrl) await this.writeGithubSummary(runUrl);
+      } catch (error) {
+        this.publishFailed = true;
+        this.warn(`Could not publish the JUnit report: ${safeErrorMessage(error)}`);
       }
-      const runUrl = browserRunUrl(run);
-      this.output(runUrl ? `Published run: ${runUrl}` : `Published run ${run.response.runId}.`);
-      if (runUrl) await this.writeGithubSummary(runUrl);
-    } catch (error) {
-      this.warn(`Could not publish the JUnit report: ${safeErrorMessage(error)}`);
+    } else {
+      this.publishFailed = true;
+    }
+
+    if (this.bundle) {
+      const retain = this.bundle.mode === "always" || this.publishFailed;
+      try {
+        if (retain) {
+          const outputPath = await this.bundle.finalize(junitPath);
+          this.output(`Portable run bundle: ${outputPath}`);
+          this.output("Upload this ZIP from the Test Center project Upload page.");
+        } else {
+          await this.bundle.discard();
+        }
+      } catch (error) {
+        this.warn(`Could not create the portable run bundle: ${safeErrorMessage(error)}`);
+      }
     }
   }
 
-  private async uploadTestDetails(
-    runPromise: Promise<ActiveRun | null>,
+  private async captureAndPublishTestDetails(
     test: ReporterTestCase,
     result: ReporterTestResult,
   ): Promise<void> {
-    const run = await runPromise;
-    if (!run) return;
     const steps = prepareSteps(test, result, this.rootDir, (message) => this.warn(message));
-    let stepsDeclared = false;
-    if (steps.batch) {
-      try {
-        await run.client.declareSteps(run.response, steps.batch);
-        stepsDeclared = true;
-      } catch (error) {
-        this.warn(`Could not record steps for "${test.title}": ${safeErrorMessage(error)}`);
-      }
-    }
-
     const attachments = await prepareAttachments(
       test,
       result,
       this.rootDir,
       (message) => this.warn(message),
-      stepsDeclared ? steps.stepIdForAttachment : undefined,
+      steps.stepIdForAttachment,
     );
-    if (attachments.length === 0) return;
-
-    const declared = await run.client.declareAttachments(
-      run.response,
-      attachments.map((attachment) => attachment.declaration),
-    );
-    if (declared.uploads.length !== attachments.length) {
-      throw new Error(
-        `Test Center returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
-      );
+    if (this.bundle) {
+      try {
+        await this.bundle.addAttempt({
+          ...(steps.batch?.suite ? { suite: steps.batch.suite } : {}),
+          test: test.title.slice(0, 1_000),
+          attempt: result.retry,
+          steps: steps.batch,
+          attachments,
+        });
+      } catch (error) {
+        this.warn(
+          `Could not stage offline details for "${test.title}": ${safeErrorMessage(error)}`,
+        );
+      }
     }
 
-    await Promise.all(
-      declared.uploads.map((upload, index) => {
-        const attachment = attachments[index];
-        if (!attachment) throw new Error("evidence upload order did not match its declaration");
-        return this.uploads.use(() => run.client.put(upload, attachment.body));
-      }),
-    );
+    const run = this.runPromise ? await this.runPromise : null;
+    if (!run) return;
+    if (steps.batch) {
+      try {
+        await run.client.declareSteps(run.response, steps.batch);
+      } catch (error) {
+        this.publishFailed = true;
+        this.warn(`Could not record steps for "${test.title}": ${safeErrorMessage(error)}`);
+      }
+    }
+    if (attachments.length === 0) return;
+
+    try {
+      const declared = await run.client.declareAttachments(
+        run.response,
+        attachments.map((attachment) => attachment.declaration),
+      );
+      if (declared.uploads.length !== attachments.length) {
+        throw new Error(
+          `Test Center returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
+        );
+      }
+      await Promise.all(
+        declared.uploads.map((upload, index) => {
+          const attachment = attachments[index];
+          if (!attachment) throw new Error("evidence upload order did not match its declaration");
+          return this.uploads.use(() => run.client.put(upload, attachment.body));
+        }),
+      );
+    } catch (error) {
+      this.publishFailed = true;
+      this.warn(`Could not publish evidence for "${test.title}": ${safeErrorMessage(error)}`);
+    }
   }
 
-  private resolveSettings(config: ReporterFullConfig): ResolvedSettings | string {
+  private resolvePublishSettings(): PublishSettings | string {
     const baseUrl = first(this.options.url, process.env.TESTCENTER_URL);
     const token = first(process.env.TESTCENTER_TOKEN);
     const project = first(this.options.project, process.env.TESTCENTER_PROJECT);
-    const junitFile = first(this.options.junitFile);
     const missing = [
       !baseUrl ? "TESTCENTER_URL" : undefined,
       !token ? "TESTCENTER_TOKEN" : undefined,
       !project ? "TESTCENTER_PROJECT (or reporter project option)" : undefined,
-      !junitFile ? "reporter junitFile option" : undefined,
     ].filter((value): value is string => value !== undefined);
     if (missing.length > 0) return `missing ${missing.join(", ")}`;
-    if (!baseUrl || !token || !project || !junitFile) {
+    if (!baseUrl || !token || !project) {
       return "required publishing settings did not resolve";
     }
 
@@ -264,14 +354,29 @@ export default class TestCenterReporter {
       baseUrl,
       token,
       project,
-      // Playwright's rootDir is the test directory, not the directory containing its config.
-      // Built-in reporter output paths are config-relative, so resolve the consumer path the same
-      // way or generated test directories (for example playwright-bdd) silently add a prefix.
-      junitPath: resolve(
-        config.configFile ? dirname(resolve(config.configFile)) : process.cwd(),
-        junitFile,
-      ),
       organization: first(this.options.organization, process.env.TESTCENTER_ORG),
+    };
+  }
+
+  private resolvePaths(config: ReporterFullConfig): ResolvedPaths | string {
+    const junitFile = first(this.options.junitFile);
+    if (!junitFile) return "missing reporter junitFile option";
+    const configDirectory = config.configFile ? dirname(resolve(config.configFile)) : process.cwd();
+    const junitPath = resolve(configDirectory, junitFile);
+    const requestedMode = first(this.options.bundle?.mode, process.env.TESTCENTER_BUNDLE_MODE);
+    if (requestedMode && !["always", "on-failure", "off"].includes(requestedMode)) {
+      this.warn(`Unknown bundle mode "${requestedMode}"; using "always".`);
+    }
+    const bundleOutput = first(
+      this.options.bundle?.outputDir,
+      process.env.TESTCENTER_BUNDLE_OUTPUT_DIR,
+    );
+    return {
+      junitPath,
+      bundleMode: resolveBundleMode(requestedMode),
+      bundleOutputDirectory: bundleOutput
+        ? resolve(configDirectory, bundleOutput)
+        : join(dirname(junitPath), "testcenter-bundles"),
     };
   }
 

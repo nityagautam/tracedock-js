@@ -32,6 +32,8 @@ export default defineConfig({
         name: "checkout-e2e",
         // This is the default; shown here to make the resulting run name explicit.
         namePattern: "{name}-{timestamp}",
+        // Optional. Defaults to test-results/testcenter-bundles beside junit.xml.
+        bundle: { outputDir: "test-results/testcenter-bundles" },
       },
     ],
   ],
@@ -99,6 +101,8 @@ package code can print a configuration message.
 | `ci`                | `TESTCENTER_CI_*`, then detected CI metadata | Build, job and pipeline context                                                                                     |
 | `tags`              | —                                            | Run tags                                                                                                            |
 | `uploadConcurrency` | —                                            | Concurrent evidence uploads, from 1 to 16; default 3                                                                |
+| `bundle.mode`       | `TESTCENTER_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
+| `bundle.outputDir`  | `TESTCENTER_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `testcenter-bundles` beside the configured JUnit file                                 |
 
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, CircleCI, Buildkite, Bitbucket Pipelines and
 TeamCity metadata is detected without a vendor SDK. In GitHub Actions, the run link is appended to
@@ -177,6 +181,39 @@ The safety ceiling is 5,000 steps per testcase attempt. If a generated or pathol
 exceeds it, the reporter keeps the first 5,000, prints one warning and continues. This feature is
 reporter-native: manually uploaded JUnit XML has no portable structured-step representation, so it
 continues to ingest normally and simply shows no Test steps section.
+
+## Portable run ZIP
+
+Every execution produces one `<run-name>.testcenter-run.zip` by default. The archive contains the
+finished JUnit XML, run and CI metadata, every structured step, retries, evidence files, and the
+exact testcase/attempt/step relationship for each file. It contains no API token, cookie,
+presigned URL, or Test Center credential.
+
+The default directory is `testcenter-bundles` beside `junitFile`. Choose another location in the
+reporter configuration when CI collects artifacts from a specific directory:
+
+```ts
+[
+  "@testcenter/playwright",
+  {
+    junitFile,
+    bundle: {
+      mode: "always",
+      outputDir: "artifacts/testcenter",
+    },
+  },
+];
+```
+
+`always` is the default so a portable result exists whether live publishing succeeds or not.
+`on-failure` keeps it only when run creation, step/evidence publication, JUnit upload, or completion
+is incomplete. `off` disables local staging and ZIP creation. The equivalent environment variables
+are `TESTCENTER_BUNDLE_MODE` and `TESTCENTER_BUNDLE_OUTPUT_DIR`.
+
+To publish later, open the target project's **Upload** page and select the ZIP by itself. Test
+Center validates it in the background and restores the same results, steps, retries and evidence
+as the live reporter. Re-importing the same bundle repairs or returns the original run instead of
+appending duplicate evidence.
 
 ## Sharding
 

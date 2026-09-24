@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -117,6 +117,9 @@ describe("TestCenterReporter", () => {
     expect(createBody).toEqual(
       expect.objectContaining({ project: "checkout-web", framework: "playwright" }),
     );
+    expect(createBody.sourceBundleId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
     expect(createBody.name).toMatch(/^Checkout E2E-\d{8}T\d{9}Z$/);
     expect(createBody.ci).toEqual({
       provider: "unknown",
@@ -152,6 +155,44 @@ describe("TestCenterReporter", () => {
       expect(new Headers(call.init.headers).has("authorization")).toBe(false);
     }
     expect(calls.at(-1)?.url).toBe("https://testcenter.example/api/v1/runs/run-1/complete");
+
+    const bundleDirectory = join(directory, "reports", "testcenter-bundles");
+    const bundles = await readdir(bundleDirectory);
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
+    const archive = await readFile(join(bundleDirectory, bundles[0]!));
+    const storedText = archive.toString("utf8");
+    expect(storedText).toContain("testcenter-bundle.json");
+    expect(storedText).toContain(String(createBody.sourceBundleId));
+    expect(storedText).toContain("Given a saved card");
+    expect(storedText).toContain("zip body");
+  });
+
+  it("writes a portable ZIP to a configured directory when live publishing is unavailable", async () => {
+    delete process.env.TESTCENTER_TOKEN;
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const reporter = new TestCenterReporter({
+      junitFile: "reports/junit.xml",
+      bundle: { outputDir: "portable-output" },
+    });
+    reporter.onBegin(config(directory, join(directory, "playwright.config.ts")), {
+      allTests: () => [{}],
+    });
+    await mkdir(join(directory, "reports"), { recursive: true });
+    await writeFile(
+      join(directory, "reports", "junit.xml"),
+      '<testsuites><testsuite><testcase name="offline"/></testsuite></testsuites>',
+    );
+    await reporter.onExit();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const bundles = await readdir(join(directory, "portable-output"));
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
   });
 
   it("skips as one gate when credentials are incomplete", () => {

@@ -47,6 +47,11 @@ export interface TestCenterReporterOptions {
   tags?: Record<string, string>;
   /** Maximum simultaneous object-store PUTs. Defaults to 3. */
   uploadConcurrency?: number;
+  /** Portable ZIP output. Defaults to always, beside junitFile in testcenter-bundles/. */
+  bundle?: {
+    mode?: "always" | "on-failure" | "off";
+    outputDir?: string;
+  };
 }
 
 export interface ReporterAttachment {
