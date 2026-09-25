@@ -6,6 +6,7 @@ import type { PreparedAttachment } from "./attachments.js";
 import type { TestPriorityDeclaration } from "./priorities.js";
 import type { StepBatch } from "./steps.js";
 import type { TestCenterCiOptions } from "./types.js";
+import { REPORTER_VERSION } from "./version.js";
 import { writeStoredZip } from "./zip.js";
 
 export type BundleMode = "always" | "on-failure" | "off";
@@ -60,6 +61,7 @@ export class PortableRunBundle {
       outputDirectory: string;
       projectHint?: string;
       playwrightVersion: string;
+      testCaseCount: number;
       run: BundleRunMetadata;
       testPriorities: TestPriorityDeclaration[];
     },
@@ -118,12 +120,13 @@ export class PortableRunBundle {
     const report = await hashFile(stagedReport);
     if (report.bytes === 0) throw new Error(`JUnit report is missing or empty: ${junitPath}`);
     const manifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
+      testCaseCount: this.input.testCaseCount,
       bundleId: this.input.bundleId,
       createdAt: new Date().toISOString(),
       producer: {
         name: "@testcenter/playwright",
-        version: "0.1.0",
+        version: REPORTER_VERSION,
         playwrightVersion: this.input.playwrightVersion,
       },
       ...(this.input.projectHint ? { projectHint: this.input.projectHint } : {}),
@@ -138,14 +141,14 @@ export class PortableRunBundle {
       testPriorities: this.input.testPriorities,
       attempts: this.attempts,
     };
-    const manifestPath = join(this.stageRoot, "testcenter-bundle.json");
+    const manifestPath = join(this.stageRoot, "manifest.json");
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
     const destination = await availableOutputPath(
       this.outputDirectory,
       `${safeFileName(this.input.run.name)}.testcenter-run.zip`,
     );
     await writeStoredZip(destination, [
-      { name: "testcenter-bundle.json", path: manifestPath },
+      { name: "manifest.json", path: manifestPath },
       { name: reportPath, path: stagedReport },
       ...this.attempts.flatMap((attempt) =>
         attempt.evidence.map((evidence) => ({

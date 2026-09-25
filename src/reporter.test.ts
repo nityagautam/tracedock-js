@@ -102,14 +102,14 @@ describe("TestCenterReporter", () => {
         join(directory, "test-results", ".features-gen"),
         join(directory, "playwright.config.ts"),
       ),
-      { allTests: () => [testCase(["@p0"]), testCase(["@p0"])] },
+      { allTests: () => [testCase(["@p0"]), testCase([], "uses a gift card")] },
     );
     reporter.onTestEnd(testCase(), result());
 
     await mkdir(join(directory, "reports"), { recursive: true });
     await writeFile(
       join(directory, "reports", "junit.xml"),
-      '<testsuites><testsuite><testcase name="pays"/></testsuite></testsuites>',
+      '<testsuites><testsuite><testcase name="pays"/><testcase name="gift card"/></testsuite></testsuites>',
     );
     await reporter.onExit();
 
@@ -160,6 +160,11 @@ describe("TestCenterReporter", () => {
           test: "pays with a saved card",
           priority: "P0",
         },
+        {
+          suite: "specs/checkout.spec.ts",
+          test: "uses a gift card",
+          priority: null,
+        },
       ],
     });
 
@@ -176,7 +181,15 @@ describe("TestCenterReporter", () => {
     expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
     const archive = await readFile(join(bundleDirectory, bundles[0]!));
     const storedText = archive.toString("utf8");
-    expect(storedText).toContain("testcenter-bundle.json");
+    expect(storedText).toContain("manifest.json");
+    expect(storedText).not.toContain("testcenter-bundle.json");
+    expect(storedText).toContain('"schemaVersion": 2');
+    expect(storedText).toContain('"testCaseCount": 2');
+    const packageJson = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    expect(packageJson.version).toBe("0.2.0");
+    expect(storedText).toContain(`"version": "${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
     expect(storedText).toContain('"priority": "P0"');
@@ -315,17 +328,11 @@ function config(
   return { rootDir, configFile, version: "1.62.1", shard: null };
 }
 
-function testCase(tags: string[] = []): ReporterTestCase {
+function testCase(tags: string[] = [], title = "pays with a saved card"): ReporterTestCase {
   return {
-    title: "pays with a saved card",
+    title,
     tags,
-    titlePath: () => [
-      "",
-      "chromium",
-      "specs/checkout.spec.ts",
-      "Checkout",
-      "pays with a saved card",
-    ],
+    titlePath: () => ["", "chromium", "specs/checkout.spec.ts", "Checkout", title],
     location: { file: "/repo/specs/checkout.spec.ts" },
   };
 }

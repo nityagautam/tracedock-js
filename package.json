@@ -1,6 +1,6 @@
 {
   "name": "@testcenter/playwright",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Playwright reporter for publishing JUnit results and test evidence to Test Center",
   "homepage": "https://github.com/nityagautam/TestCenter#readme",
   "bugs": {

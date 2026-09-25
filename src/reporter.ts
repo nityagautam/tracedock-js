@@ -129,6 +129,7 @@ export default class TestCenterReporter {
         outputDirectory: paths.bundleOutputDirectory,
         projectHint,
         playwrightVersion: config.version,
+        testCaseCount: allTests.length,
         run: removeUndefined({
           name: runName,
           framework: "playwright" as const,

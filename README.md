@@ -211,8 +211,10 @@ continues to ingest normally and simply shows no Test steps section.
 
 Every execution produces one `<run-name>.testcenter-run.zip` by default. The archive contains the
 finished JUnit XML, run and CI metadata, tag-derived testcase priorities, every structured step,
-retries, evidence files, and the exact testcase/attempt/step relationship for each file. It contains no API token, cookie,
-presigned URL, or Test Center credential.
+retries, evidence files, and the exact testcase/attempt/step relationship for each file. Version
+`0.2.0` writes schema-version-2 metadata as `manifest.json`, including the number of tests selected
+at `onBegin`. During import Test Center verifies that count with its canonical JUnit parser before
+promoting the run. It contains no API token, cookie, presigned URL, or Test Center credential.
 
 The default directory is `testcenter-bundles` beside `junitFile`. Choose another location in the
 reporter configuration when CI collects artifacts from a specific directory:
@@ -240,8 +242,11 @@ Center validates it in the background and restores the same results, priorities,
 and evidence as the live reporter. Re-importing the same bundle repairs or returns the original run instead of
 appending duplicate evidence.
 
+Bundles created by reporter `0.1.x` remain importable. They use `testcenter-bundle.json` and do not
+contain a declared testcase count, so the importer cannot apply the new count check to them.
+
 ## Sharding
 
 Each Playwright process creates one Test Center run. To publish one combined run from multiple
 shards, use Playwright blob reports plus `npx playwright merge-reports`, then run this reporter as
-part of the merge configuration. Automatic cross-process shard merging is not part of `0.1.x`.
+part of the merge configuration. Automatic cross-process shard merging is not part of `0.2.x`.
