@@ -49,6 +49,8 @@ export interface TestCenterReporterOptions {
   priority?: { fromTags?: boolean };
   /** Maximum simultaneous object-store PUTs. Defaults to 3. */
   uploadConcurrency?: number;
+  /** Project capability lookup timeout in milliseconds. Defaults to 5,000. */
+  capabilityTimeoutMs?: number;
   /** Portable ZIP output. Defaults to always, beside junitFile in testcenter-bundles/. */
   bundle?: {
     mode?: "always" | "on-failure" | "off";
@@ -86,6 +88,7 @@ export interface ReporterTestStep {
  * dependency still tells npm which runner versions are supported.
  */
 export interface ReporterTestCase {
+  id?: string;
   title: string;
   tags: string[];
   titlePath(): string[];
@@ -95,6 +98,8 @@ export interface ReporterTestCase {
 export interface ReporterTestResult {
   attachments: ReporterAttachment[];
   retry: number;
+  status?: "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
+  duration?: number;
   steps?: ReporterTestStep[];
 }
 

@@ -41,6 +41,19 @@ describe("TestCenterReporter", () => {
       const url = String(input);
       calls.push({ url, init });
 
+      if (url.endsWith("/api/v1/projects/checkout-web/publish-capabilities")) {
+        return jsonResponse({
+          schemaVersion: 1,
+          project: "checkout-web",
+          collectionMode: "full",
+          policyRevision: 1,
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          summarySchemaVersion: 1,
+          summary: null,
+          summaryUrl: "/api/v1/runs/summary",
+        });
+      }
+
       if (url === "https://testcenter.example/api/v1/runs") {
         return jsonResponse(
           {
@@ -231,6 +244,80 @@ describe("TestCenterReporter", () => {
     const bundles = await readdir(join(directory, "portable-output"));
     expect(bundles).toHaveLength(1);
     expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
+  });
+
+  it("publishes only aggregate counts when the project is Summary-only", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+        const url = String(input);
+        calls.push({ url, init });
+        if (url.endsWith("/publish-capabilities")) {
+          return jsonResponse({
+            schemaVersion: 1,
+            project: "checkout-web",
+            collectionMode: "summary_only",
+            policyRevision: 3,
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            summarySchemaVersion: 1,
+            summary: {
+              limit: 500,
+              used: 4,
+              remaining: 496,
+              periodEnd: "2026-10-01T00:00:00.000Z",
+            },
+            summaryUrl: "/api/v1/runs/summary",
+          });
+        }
+        if (url.endsWith("/api/v1/runs/summary")) {
+          return jsonResponse(
+            { runId: "summary-1", status: "complete", dataMode: "summary_only" },
+            201,
+          );
+        }
+        return jsonResponse({ message: "unexpected request" }, 500);
+      }),
+    );
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    reporter.onBegin(config(directory), { allTests: () => [testCase()] });
+    reporter.onTestEnd(testCase(), {
+      retry: 0,
+      status: "failed",
+      duration: 20,
+      attachments: [
+        { name: "failure", contentType: "text/plain", body: Buffer.from("failure secret") },
+      ],
+      steps: [],
+    });
+    reporter.onTestEnd(testCase(), {
+      retry: 1,
+      status: "passed",
+      duration: 25,
+      attachments: [{ name: "trace", contentType: "application/zip", body: Buffer.from("secret") }],
+      steps: [],
+    });
+    await reporter.onExit();
+
+    expect(calls).toHaveLength(2);
+    expect(calls.some(({ url }) => url.endsWith("/api/v1/runs"))).toBe(false);
+    expect(calls.some(({ url }) => url.startsWith("https://storage.example"))).toBe(false);
+    const body = JSON.parse(String(calls[1]?.init.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      project: "checkout-web",
+      policyRevision: 3,
+      total: 1,
+      passed: 1,
+      failed: 0,
+      skipped: 0,
+      errored: 0,
+      blocked: 0,
+      flaky: 1,
+    });
+    expect(String(calls[1]?.init.body)).not.toContain("secret");
+    expect(stdout.mock.calls.flat().join(" ")).toContain("Published Summary-only run");
+    await expect(readdir(join(directory, "reports", "testcenter-bundles"))).rejects.toThrow();
   });
 
   it("skips as one gate when credentials are incomplete", () => {

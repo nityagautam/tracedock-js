@@ -9,6 +9,7 @@ import {
   TestCenterClient,
   type ArtifactUpload,
   type CreateRunResponse,
+  type PublishCapabilitiesResponse,
 } from "./client.js";
 import { detectMetadata, resolveCiContext } from "./metadata.js";
 import { prepareTestPriorities, priorityTagsEnabled } from "./priorities.js";
@@ -45,6 +46,19 @@ interface ResolvedPaths {
   bundleOutputDirectory: string;
 }
 
+type PublishMode = "full" | "summary_only";
+
+interface SummaryPublication {
+  client: TestCenterClient;
+  summaryUrl: string;
+  bundleId: string;
+  baseUrl: string;
+  organization?: string;
+  startedAt: Date;
+  body: Record<string, unknown>;
+  outcomes: Map<string, { status: "passed" | "failed" | "skipped" | "errored"; flaky: boolean }>;
+}
+
 const CONFIGURATION_GUIDE =
   "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/playwright-reporter-plugin#configure";
 
@@ -52,11 +66,13 @@ export default class TestCenterReporter {
   private readonly options: TestCenterReporterOptions;
   private readonly uploads: Semaphore;
   private runPromise: Promise<ActiveRun | null> | undefined;
+  private modePromise: Promise<PublishMode | null> | undefined;
   private readonly pending = new Set<Promise<void>>();
   private rootDir = process.cwd();
   private junitPath: string | undefined;
   private bundle: PortableRunBundle | undefined;
   private publishFailed = false;
+  private summary: SummaryPublication | undefined;
 
   constructor(options: TestCenterReporterOptions = { junitFile: "" }) {
     this.options = options;
@@ -122,7 +138,8 @@ export default class TestCenterReporter {
       typeof publishSettings === "string"
         ? first(this.options.project, process.env.TESTCENTER_PROJECT)
         : publishSettings.project;
-    if (paths.bundleMode !== "off") {
+    const createPortableBundle = () => {
+      if (paths.bundleMode === "off" || this.bundle) return;
       this.bundle = new PortableRunBundle({
         bundleId,
         mode: paths.bundleMode,
@@ -148,16 +165,16 @@ export default class TestCenterReporter {
         }),
         testPriorities,
       });
-    }
+    };
     if (typeof publishSettings === "string") {
+      createPortableBundle();
       this.publishFailed = true;
       this.configurationWarning(publishSettings);
       return;
     }
 
     const client = new TestCenterClient(publishSettings.baseUrl, publishSettings.token);
-    const artifactName = basename(paths.junitPath);
-    const body = {
+    const commonBody = {
       project: publishSettings.project,
       name: runName,
       framework: "playwright",
@@ -174,45 +191,101 @@ export default class TestCenterReporter {
         "test-count": String(allTests.length),
       }),
       sourceBundleId: bundleId,
-      artifacts: [{ filename: artifactName, contentType: "application/xml", format: "junit-xml" }],
     };
 
-    this.runPromise = client
-      .createRun(removeUndefined(body), bundleId)
-      .then(async (response) => {
-        const reportUpload = response.uploads[0];
-        if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
-        if (testPriorities.length > 0) {
-          try {
-            await client.declareTestPriorities(response, testPriorities);
-          } catch (error) {
-            this.publishFailed = true;
-            this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
+    this.modePromise = client
+      .getPublishCapabilities(
+        publishSettings.project,
+        boundedInteger(this.options.capabilityTimeoutMs, 500, 30_000, 5_000),
+      )
+      .then(async (capability: PublishCapabilitiesResponse) => {
+        if (capability.collectionMode === "summary_only") {
+          if (!capability.summary || capability.summary.remaining <= 0) {
+            throw new Error("Summary-only publishing is unavailable or its allowance is exhausted");
           }
+          this.summary = {
+            client,
+            summaryUrl: capability.summaryUrl,
+            bundleId,
+            baseUrl: publishSettings.baseUrl,
+            organization: publishSettings.organization,
+            startedAt,
+            body: removeUndefined({
+              ...commonBody,
+              frameworkVersion: config.version,
+              policyRevision: capability.policyRevision,
+            }),
+            outcomes: new Map(),
+          };
+          this.output(
+            `Summary-only mode: publishing aggregate counts without test details or evidence (${capability.summary.remaining} runs remaining).`,
+          );
+          return "summary_only" as const;
         }
-        return {
-          client,
-          response,
-          reportUpload,
-          junitPath: paths.junitPath,
-          organization: publishSettings.organization,
-          baseUrl: publishSettings.baseUrl,
-        };
+
+        createPortableBundle();
+        const artifactName = basename(paths.junitPath);
+        this.runPromise = client
+          .createRun(
+            removeUndefined({
+              ...commonBody,
+              collectionMode: "full" as const,
+              policyRevision: capability.policyRevision,
+              artifacts: [
+                { filename: artifactName, contentType: "application/xml", format: "junit-xml" },
+              ],
+            }),
+            bundleId,
+          )
+          .then(async (response) => {
+            const reportUpload = response.uploads[0];
+            if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
+            if (testPriorities.length > 0) {
+              try {
+                await client.declareTestPriorities(response, testPriorities);
+              } catch (error) {
+                this.publishFailed = true;
+                this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
+              }
+            }
+            return {
+              client,
+              response,
+              reportUpload,
+              junitPath: paths.junitPath,
+              organization: publishSettings.organization,
+              baseUrl: publishSettings.baseUrl,
+            };
+          })
+          .catch((error: unknown) => {
+            this.publishFailed = true;
+            this.warn(`Could not create the run: ${safeErrorMessage(error)}`);
+            return null;
+          });
+        await this.runPromise;
+        return "full" as const;
       })
       .catch((error: unknown) => {
+        // Unknown policy must never cause the reporter to leak details to an older or failing
+        // server. The Playwright command remains warning-only, as publishing always has been.
         this.publishFailed = true;
-        this.warn(`Could not create the run: ${safeErrorMessage(error)}`);
+        this.warn(`Could not resolve the project publishing mode: ${safeErrorMessage(error)}`);
         return null;
       });
   }
 
   onTestEnd(test: ReporterTestCase, result: ReporterTestResult): void {
-    if (
-      (!this.runPromise && !this.bundle) ||
-      (result.attachments.length === 0 && !result.steps?.length)
-    )
-      return;
-    const task = this.captureAndPublishTestDetails(test, result).catch((error: unknown) => {
+    if (!this.modePromise && !this.bundle) return;
+    const task = (async () => {
+      const mode = this.modePromise ? await this.modePromise : "full";
+      if (mode === "summary_only") {
+        this.recordSummaryOutcome(test, result);
+        return;
+      }
+      if (mode === "full" && (result.attachments.length > 0 || result.steps?.length)) {
+        await this.captureAndPublishTestDetails(test, result);
+      }
+    })().catch((error: unknown) => {
       this.publishFailed = true;
       this.warn(`Could not capture test details for "${test.title}": ${safeErrorMessage(error)}`);
     });
@@ -226,6 +299,11 @@ export default class TestCenterReporter {
    */
   async onExit(): Promise<void> {
     await Promise.allSettled([...this.pending]);
+    const mode = this.modePromise ? await this.modePromise : this.bundle ? "full" : null;
+    if (mode === "summary_only") {
+      await this.publishSummary();
+      return;
+    }
     const run = this.runPromise ? await this.runPromise : null;
     const junitPath = this.junitPath;
     if (!junitPath) return;
@@ -279,6 +357,74 @@ export default class TestCenterReporter {
       } catch (error) {
         this.warn(`Could not create the portable run bundle: ${safeErrorMessage(error)}`);
       }
+    }
+  }
+
+  private recordSummaryOutcome(test: ReporterTestCase, result: ReporterTestResult): void {
+    if (!this.summary) return;
+    const key = test.id ?? `${test.location.file}\0${test.titlePath().join("\0")}`;
+    const previous = this.summary.outcomes.get(key);
+    let status: "passed" | "failed" | "skipped" | "errored";
+    switch (result.status) {
+      case "passed":
+      case "failed":
+      case "skipped":
+        status = result.status;
+        break;
+      case "timedOut":
+      case "interrupted":
+        status = "errored";
+        break;
+      default:
+        throw new Error(`unsupported Playwright result status: ${String(result.status)}`);
+    }
+    this.summary.outcomes.set(key, {
+      status,
+      flaky:
+        status === "passed" &&
+        (result.retry > 0 || (previous !== undefined && previous.status !== "passed")),
+    });
+  }
+
+  private async publishSummary(): Promise<void> {
+    const summary = this.summary;
+    if (!summary) return;
+    const finishedAt = new Date();
+    const counts = {
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      errored: 0,
+      blocked: 0,
+      flaky: 0,
+    };
+    for (const outcome of summary.outcomes.values()) {
+      counts[outcome.status] += 1;
+      if (outcome.flaky) counts.flaky += 1;
+    }
+    const total = counts.passed + counts.failed + counts.skipped + counts.errored + counts.blocked;
+    try {
+      const response = await summary.client.createSummaryRun(
+        summary.summaryUrl,
+        {
+          ...summary.body,
+          finishedAt: finishedAt.toISOString(),
+          durationMs: Math.max(0, finishedAt.getTime() - summary.startedAt.getTime()),
+          total,
+          ...counts,
+        },
+        summary.bundleId,
+      );
+      const runUrl = browserRunUrlFor(summary.baseUrl, summary.organization, response.runId);
+      this.output(
+        runUrl
+          ? `Published Summary-only run: ${runUrl}`
+          : `Published Summary-only run ${response.runId}.`,
+      );
+      if (runUrl) await this.writeGithubSummary(runUrl);
+    } catch (error) {
+      this.publishFailed = true;
+      this.warn(`Could not publish the aggregate run summary: ${safeErrorMessage(error)}`);
     }
   }
 
@@ -467,9 +613,17 @@ export default class TestCenterReporter {
 }
 
 function browserRunUrl(run: ActiveRun): string | undefined {
-  if (!run.organization) return undefined;
-  const path = `/o/${encodeURIComponent(run.organization)}/runs/${encodeURIComponent(run.response.runId)}`;
-  return new URL(path, `${run.baseUrl}/`).toString();
+  return browserRunUrlFor(run.baseUrl, run.organization, run.response.runId);
+}
+
+function browserRunUrlFor(
+  baseUrl: string,
+  organization: string | undefined,
+  runId: string,
+): string | undefined {
+  if (!organization) return undefined;
+  const path = `/o/${encodeURIComponent(organization)}/runs/${encodeURIComponent(runId)}`;
+  return new URL(path, `${baseUrl}/`).toString();
 }
 
 function defaultRunName(buildNumber: string | undefined): string {
@@ -498,6 +652,17 @@ function positiveInteger(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function boundedInteger(
+  value: number | undefined,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+): number {
+  return Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, Math.floor(value as number)))
+    : fallback;
 }
 
 function first(...values: Array<string | undefined>): string | undefined {

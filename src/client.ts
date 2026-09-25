@@ -34,6 +34,23 @@ export interface CompleteRunResponse {
   missingAttachments?: string[];
 }
 
+export interface PublishCapabilitiesResponse {
+  schemaVersion: 1;
+  project: string;
+  collectionMode: "full" | "summary_only";
+  policyRevision: number;
+  expiresAt: string;
+  summarySchemaVersion: 1;
+  summary: { limit: number; used: number; remaining: number; periodEnd: string } | null;
+  summaryUrl: string;
+}
+
+export interface CreateSummaryRunResponse {
+  runId: string;
+  status: "complete";
+  dataMode: "summary_only";
+}
+
 export class TestCenterClient {
   private readonly baseUrl: string;
 
@@ -46,6 +63,34 @@ export class TestCenterClient {
 
   createRun(body: unknown, idempotencyKey: string): Promise<CreateRunResponse> {
     return this.requestJson<CreateRunResponse>("/api/v1/runs", {
+      body,
+      headers: { "idempotency-key": idempotencyKey },
+    });
+  }
+
+  async getPublishCapabilities(
+    project: string,
+    timeoutMs = 5_000,
+  ): Promise<PublishCapabilitiesResponse> {
+    const response = await this.requestJson<unknown>(
+      `/api/v1/projects/${encodeURIComponent(project)}/publish-capabilities`,
+      { method: "GET", signal: AbortSignal.timeout(timeoutMs) },
+    );
+    if (!isPublishCapabilitiesResponse(response)) {
+      throw new Error("Test Center returned an unsupported publish-capability response");
+    }
+    if (Date.parse(response.expiresAt) <= Date.now()) {
+      throw new Error("Test Center returned an expired publish-capability response");
+    }
+    return response;
+  }
+
+  createSummaryRun(
+    path: string,
+    body: unknown,
+    idempotencyKey: string,
+  ): Promise<CreateSummaryRunResponse> {
+    return this.requestJson<CreateSummaryRunResponse>(path, {
       body,
       headers: { "idempotency-key": idempotencyKey },
     });
@@ -115,16 +160,22 @@ export class TestCenterClient {
 
   private async requestJson<Response>(
     path: string,
-    request: { body?: unknown; headers?: Record<string, string> },
+    request: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      method?: "GET" | "POST";
+      signal?: AbortSignal;
+    },
   ): Promise<Response> {
     const response = await fetch(this.absoluteUrl(path), {
-      method: "POST",
+      method: request.method ?? "POST",
       headers: {
         authorization: `Bearer ${this.token}`,
         "content-type": "application/json",
         ...request.headers,
       },
       body: request.body === undefined ? undefined : JSON.stringify(request.body),
+      signal: request.signal,
     });
 
     if (!response.ok) {
@@ -143,6 +194,27 @@ export class TestCenterClient {
   private absoluteUrl(path: string): string {
     return new URL(path, `${this.baseUrl}/`).toString();
   }
+}
+
+function isPublishCapabilitiesResponse(value: unknown): value is PublishCapabilitiesResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PublishCapabilitiesResponse>;
+  return (
+    candidate.schemaVersion === 1 &&
+    candidate.summarySchemaVersion === 1 &&
+    (candidate.collectionMode === "full" || candidate.collectionMode === "summary_only") &&
+    typeof candidate.project === "string" &&
+    Number.isSafeInteger(candidate.policyRevision) &&
+    typeof candidate.expiresAt === "string" &&
+    Number.isFinite(Date.parse(candidate.expiresAt)) &&
+    typeof candidate.summaryUrl === "string" &&
+    (candidate.summary === null ||
+      (typeof candidate.summary === "object" &&
+        Number.isSafeInteger(candidate.summary.limit) &&
+        Number.isSafeInteger(candidate.summary.used) &&
+        Number.isSafeInteger(candidate.summary.remaining) &&
+        typeof candidate.summary.periodEnd === "string"))
+  );
 }
 
 export class HttpError extends Error {

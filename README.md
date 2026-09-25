@@ -107,6 +107,25 @@ The Test Center reporter reads the JUnit file in Playwright's `onExit` hook, aft
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
 JUnit reporter; Test Center receives the final version.
 
+### Server-selected Summary-only mode
+
+At the start of each execution, the reporter asks Test Center for the configured project's
+publish mode. In **Full details**, the JUnit, priorities, steps and evidence flow is unchanged.
+In **Summary-only**, it sends one content-free aggregate containing run/CI metadata and final
+passed, failed, skipped, errored, blocked and flaky counts. It does not create an upload, send JUnit,
+declare testcase priorities, capture steps/evidence or build a portable ZIP.
+
+An administrator selects this policy in project settings; there is deliberately no reporter or
+environment override. Community plan revisions include 500 summary runs per period, Pro includes
+5,000 and Enterprise uses its explicit custom allowance. Each accepted summary consumes one
+summary-run unit and no detailed-result units. Test names, failure diagnosis, testcase history,
+flake analysis and testcase-level gates are unavailable for that run.
+
+If capability negotiation times out, is rejected, or comes from an incompatible older server, the
+reporter warns and publishes nothing to Test Center. It never guesses Full details, because that
+could send data the administrator chose not to retain. Playwright's own result and exit code remain
+unchanged.
+
 Set credentials in the environment, never in `playwright.config.ts`:
 
 ```bash
@@ -159,6 +178,7 @@ package code can print a configuration message.
 | `tags`              | —                                            | Run tags                                                                                                            |
 | `priority.fromTags` | `TESTCENTER_PRIORITY_FROM_TAGS`              | Synchronize exact `@p0`–`@p3` Playwright tags; enabled by default                                                   |
 | `uploadConcurrency` | —                                            | Concurrent evidence uploads, from 1 to 16; default 3                                                                |
+| `capabilityTimeoutMs` | —                                          | Capability lookup timeout, clamped to 500–30,000 ms; default 5,000                                                  |
 | `bundle.mode`       | `TESTCENTER_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
 | `bundle.outputDir`  | `TESTCENTER_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `testcenter-bundles` beside the configured JUnit file                                 |
 
