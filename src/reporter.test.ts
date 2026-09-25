@@ -2,6 +2,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  MAX_PORTABLE_BUNDLE_EVIDENCE_FILES,
+  MAX_PORTABLE_BUNDLE_MANIFEST_BYTES,
+} from "./bundle.js";
 import TestCenterReporter from "./reporter.js";
 import type { ReporterFullConfig, ReporterTestCase, ReporterTestResult } from "./types.js";
 
@@ -24,6 +28,11 @@ describe("TestCenterReporter", () => {
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, originalEnvironment);
     await rm(directory, { recursive: true, force: true });
+  });
+
+  it("matches the server's large-bundle compatibility envelope", () => {
+    expect(MAX_PORTABLE_BUNDLE_MANIFEST_BYTES).toBe(64 * 1024 * 1024);
+    expect(MAX_PORTABLE_BUNDLE_EVIDENCE_FILES).toBe(10_000);
   });
 
   it("publishes JUnit and per-attempt evidence without forwarding API auth to storage", async () => {
@@ -183,16 +192,17 @@ describe("TestCenterReporter", () => {
     const storedText = archive.toString("utf8");
     expect(storedText).toContain("manifest.json");
     expect(storedText).not.toContain("testcenter-bundle.json");
-    expect(storedText).toContain('"schemaVersion": 2');
-    expect(storedText).toContain('"testCaseCount": 2');
+    expect(storedText).toContain('"schemaVersion":2');
+    expect(storedText).toContain('"testCaseCount":2');
+    expect(storedText).not.toContain('"schemaVersion": 2');
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("0.2.0");
-    expect(storedText).toContain(`"version": "${packageJson.version}"`);
+    expect(packageJson.version).toBe("0.3.0");
+    expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
-    expect(storedText).toContain('"priority": "P0"');
+    expect(storedText).toContain('"priority":"P0"');
     expect(storedText).toContain("zip body");
   });
 
@@ -239,6 +249,7 @@ describe("TestCenterReporter", () => {
     expect(output).toContain("TESTCENTER_URL=https://testcenter.example.com");
     expect(output).toContain("TESTCENTER_RUN_NAME=checkout-e2e");
     expect(output).toContain("TESTCENTER_CI_JOB_URL=https://ci.example/jobs/12001");
+    expect(output).toContain("withTestCenterDefaults");
     expect(output).toContain("['@testcenter/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
   });

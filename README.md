@@ -267,7 +267,7 @@ continues to ingest normally and simply shows no Test steps section.
 Every execution produces one `<run-name>.testcenter-run.zip` by default. The archive contains the
 finished JUnit XML, run and CI metadata, tag-derived testcase priorities, every structured step,
 retries, evidence files, and the exact testcase/attempt/step relationship for each file. Version
-`0.2.0` writes schema-version-2 metadata as `manifest.json`, including the number of tests selected
+`0.2.0` and later write schema-version-2 metadata as `manifest.json`, including the number of tests selected
 at `onBegin`. During import Test Center verifies that count with its canonical JUnit parser before
 promoting the run. It contains no API token, cookie, presigned URL, or Test Center credential.
 
@@ -299,6 +299,9 @@ appending duplicate evidence.
 
 Bundles created by reporter `0.1.x` remain importable. They use `testcenter-bundle.json` and do not
 contain a declared testcase count, so the importer cannot apply the new count check to them.
+Both legacy and current inline manifests are bounded at 64 MiB and 10,000 evidence files. Current
+reporters write compact manifest JSON; archive-size subscription allowances remain a separate
+server-side admission check.
 
 ## Sharding
 

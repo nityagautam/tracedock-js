@@ -11,6 +11,11 @@ import { writeStoredZip } from "./zip.js";
 
 export type BundleMode = "always" | "on-failure" | "off";
 
+// The reporter is published without Test Center's private core package, so these mirror the
+// server contract deliberately. Boundary tests on both packages keep the values aligned.
+export const MAX_PORTABLE_BUNDLE_MANIFEST_BYTES = 64 * 1024 * 1024;
+export const MAX_PORTABLE_BUNDLE_EVIDENCE_FILES = 10_000;
+
 export interface BundleRunMetadata {
   name: string;
   framework: "playwright";
@@ -52,6 +57,7 @@ export class PortableRunBundle {
   private readonly stageRoot: string;
   private readonly outputDirectory: string;
   private readonly attempts: ManifestAttempt[] = [];
+  private evidenceFileCount = 0;
   private initialized = false;
 
   constructor(
@@ -80,6 +86,11 @@ export class PortableRunBundle {
     attachments: readonly PreparedAttachment[];
   }): Promise<void> {
     if (this.mode === "off") return;
+    if (this.evidenceFileCount + input.attachments.length > MAX_PORTABLE_BUNDLE_EVIDENCE_FILES) {
+      throw new Error(
+        `portable bundle evidence exceeds ${MAX_PORTABLE_BUNDLE_EVIDENCE_FILES} files`,
+      );
+    }
     await this.initialize();
     const evidence: ManifestEvidence[] = [];
     for (const attachment of input.attachments) {
@@ -100,6 +111,7 @@ export class PortableRunBundle {
         ...(attachment.declaration.stepId ? { stepId: attachment.declaration.stepId } : {}),
       });
     }
+    this.evidenceFileCount += evidence.length;
     if ((input.steps?.steps.length ?? 0) === 0 && evidence.length === 0) return;
     this.attempts.push({
       ...(input.suite ? { suite: input.suite } : {}),
@@ -142,7 +154,15 @@ export class PortableRunBundle {
       attempts: this.attempts,
     };
     const manifestPath = join(this.stageRoot, "manifest.json");
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const manifestJson = JSON.stringify(manifest);
+    const manifestBytes = Buffer.byteLength(manifestJson, "utf8");
+    if (manifestBytes > MAX_PORTABLE_BUNDLE_MANIFEST_BYTES) {
+      throw new Error(
+        `portable bundle metadata is ${manifestBytes} bytes; limit is ` +
+          `${MAX_PORTABLE_BUNDLE_MANIFEST_BYTES}`,
+      );
+    }
+    await writeFile(manifestPath, manifestJson, "utf8");
     const destination = await availableOutputPath(
       this.outputDirectory,
       `${safeFileName(this.input.run.name)}.testcenter-run.zip`,
