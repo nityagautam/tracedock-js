@@ -46,7 +46,7 @@ interface ResolvedPaths {
 }
 
 const CONFIGURATION_GUIDE =
-  "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/reporter-playwright#configure";
+  "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/playwright-reporter-plugin#configure";
 
 export default class TestCenterReporter {
   private readonly options: TestCenterReporterOptions;

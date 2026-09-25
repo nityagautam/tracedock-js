@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nityagautam/TestCenter.git",
-    "directory": "src/packages/reporter-playwright"
+    "directory": "src/packages/playwright-reporter-plugin"
   },
   "keywords": [
     "playwright",
