@@ -15,6 +15,58 @@ npm install --save-dev @testcenter/playwright
 
 Keep Playwright's built-in JUnit reporter and give both reporters the same file:
 
+### Option A: apply the evidence defaults
+
+Use `withTestCenterDefaults` when you want the integration to retain Playwright traces and videos
+for failed tests without repeating those policies in your configuration:
+
+```ts
+import { defineConfig } from "@playwright/test";
+import { withTestCenterDefaults } from "@testcenter/playwright";
+
+const junitFile = "test-results/junit.xml";
+
+export default defineConfig(
+  withTestCenterDefaults({
+    reporter: [
+      ["line"],
+      ["junit", { outputFile: junitFile, includeRetries: true }],
+      [
+        "@testcenter/playwright",
+        {
+          junitFile,
+          project: "checkout-web",
+          name: "checkout-e2e",
+          // This is the default; shown here to make the resulting run name explicit.
+          namePattern: "{name}-{timestamp}",
+          // Optional; @p0 through @p3 are synchronized by default.
+          priority: { fromTags: true },
+          // Optional. Defaults to test-results/testcenter-bundles beside junit.xml.
+          bundle: { outputDir: "test-results/testcenter-bundles" },
+        },
+      ],
+    ],
+    outputDir: "test-results/artifacts",
+    use: { screenshot: "only-on-failure" },
+  }),
+);
+```
+
+The helper returns a new configuration and does not mutate the supplied object. It preserves every
+existing top-level option and every unrelated `use` option. Explicit `trace` and `video` policies,
+including `"off"`, are also preserved; only a missing or nullish policy receives
+`"retain-on-failure"`. Per-project `use` overrides remain unchanged and continue to win through
+Playwright's normal configuration inheritance.
+
+There is therefore no unrelated configuration side effect from wrapping an existing config. The
+one deliberate effect is that a previously unspecified trace or video policy starts retaining that
+evidence for failed tests, which can add some execution time and artifact storage.
+
+### Option B: keep an existing configuration unchanged
+
+The helper is optional. If a project already has its complete Playwright configuration and evidence
+policy, add only the JUnit and Test Center reporter entries:
+
 ```ts
 import { defineConfig } from "@playwright/test";
 
@@ -30,23 +82,26 @@ export default defineConfig({
         junitFile,
         project: "checkout-web",
         name: "checkout-e2e",
-        // This is the default; shown here to make the resulting run name explicit.
-        namePattern: "{name}-{timestamp}",
-        // Optional; @p0 through @p3 are synchronized by default.
-        priority: { fromTags: true },
-        // Optional. Defaults to test-results/testcenter-bundles beside junit.xml.
-        bundle: { outputDir: "test-results/testcenter-bundles" },
       },
     ],
   ],
   outputDir: "test-results/artifacts",
   use: {
+    baseURL: "https://checkout.example.com",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
   },
+  retries: 2,
+  workers: 4,
 });
 ```
+
+Existing trace and video choices do not have to be changed. The reporter publishes the evidence
+Playwright produces under those policies; for example, `trace: "off"` remains valid but naturally
+means there is no trace to upload. Whether defaults are written manually or applied by the helper,
+they must be resolved while Playwright builds its configuration—the reporter callback itself is too
+late to change what Playwright records.
 
 The Test Center reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
