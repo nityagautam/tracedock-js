@@ -11,6 +11,9 @@ Playwright's exit code.
 npm install --save-dev @testcenter/playwright
 ```
 
+To build and install an unpublished local tarball on macOS, Linux, or Windows, follow
+[`LOCAL_DEVELOPMENT.md`](./LOCAL_DEVELOPMENT.md).
+
 ## Configure
 
 Keep Playwright's built-in JUnit reporter and give both reporters the same file:
