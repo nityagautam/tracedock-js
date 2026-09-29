@@ -2,9 +2,9 @@
   "name": "@tracedock/playwright",
   "version": "1.0.0",
   "description": "Playwright reporter for publishing JUnit results and test evidence to TraceDock",
-  "homepage": "https://github.com/nityagautam/TraceDock#readme",
+  "homepage": "https://github.com/nityagautam/tracedock-js#readme",
   "bugs": {
-    "url": "https://github.com/nityagautam/TraceDock/issues"
+    "url": "https://github.com/nityagautam/tracedock-js/issues"
   },
   "keywords": [
     "playwright",
