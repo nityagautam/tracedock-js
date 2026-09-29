@@ -6,20 +6,20 @@ import {
   MAX_PORTABLE_BUNDLE_EVIDENCE_FILES,
   MAX_PORTABLE_BUNDLE_MANIFEST_BYTES,
 } from "./bundle.js";
-import TraceDockReporter from "./reporter.js";
+import TraceOptixReporter from "./reporter.js";
 import type { ReporterFullConfig, ReporterTestCase, ReporterTestResult } from "./types.js";
 
 const originalEnvironment = { ...process.env };
 
-describe("TraceDockReporter", () => {
+describe("TraceOptixReporter", () => {
   let directory: string;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "tracedock-reporter-"));
-    process.env.TRACEDOCK_URL = "https://tracedock.example";
-    process.env.TRACEDOCK_TOKEN = "super-secret-token";
-    process.env.TRACEDOCK_PROJECT = "checkout-web";
-    process.env.TRACEDOCK_ORG = "acme";
+    directory = await mkdtemp(join(tmpdir(), "traceoptix-reporter-"));
+    process.env.TRACEOPTIX_URL = "https://traceoptix.example";
+    process.env.TRACEOPTIX_TOKEN = "super-secret-token";
+    process.env.TRACEOPTIX_PROJECT = "checkout-web";
+    process.env.TRACEOPTIX_ORG = "acme";
   });
 
   afterEach(async () => {
@@ -36,7 +36,7 @@ describe("TraceDockReporter", () => {
   });
 
   it("publishes JUnit and per-attempt evidence without forwarding API auth to storage", async () => {
-    process.env.TRACEDOCK_RUN_TAGS = "suite=regression,team=payments,owner=environment";
+    process.env.TRACEOPTIX_RUN_TAGS = "suite=regression,team=payments,owner=environment";
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = String(input);
@@ -55,7 +55,7 @@ describe("TraceDockReporter", () => {
         });
       }
 
-      if (url === "https://tracedock.example/api/v1/runs") {
+      if (url === "https://traceoptix.example/api/v1/runs") {
         return jsonResponse(
           {
             runId: "run-1",
@@ -100,7 +100,7 @@ describe("TraceDockReporter", () => {
       if (url.endsWith("/test-priorities")) {
         return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
       }
-      if (url === "https://tracedock.example/api/v1/runs/run-1/complete") {
+      if (url === "https://traceoptix.example/api/v1/runs/run-1/complete") {
         return jsonResponse({ runId: "run-1", status: "parsing" });
       }
       if (url.startsWith("https://storage.example/")) return new Response(null, { status: 200 });
@@ -109,7 +109,7 @@ describe("TraceDockReporter", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TraceDockReporter({
+    const reporter = new TraceOptixReporter({
       junitFile: "reports/junit.xml",
       name: "Checkout E2E",
       ci: {
@@ -204,12 +204,12 @@ describe("TraceDockReporter", () => {
     for (const call of storageCalls) {
       expect(new Headers(call.init.headers).has("authorization")).toBe(false);
     }
-    expect(calls.at(-1)?.url).toBe("https://tracedock.example/api/v1/runs/run-1/complete");
+    expect(calls.at(-1)?.url).toBe("https://traceoptix.example/api/v1/runs/run-1/complete");
 
-    const bundleDirectory = join(directory, "reports", "tracedock-bundles");
+    const bundleDirectory = join(directory, "reports", "traceoptix-bundles");
     const bundles = await readdir(bundleDirectory);
     expect(bundles).toHaveLength(1);
-    expect(bundles[0]).toMatch(/\.tracedock-run\.zip$/);
+    expect(bundles[0]).toMatch(/\.traceoptix-run\.zip$/);
     const archive = await readFile(join(bundleDirectory, bundles[0]!));
     const storedText = archive.toString("utf8");
     expect(storedText).toContain("manifest.json");
@@ -219,7 +219,7 @@ describe("TraceDockReporter", () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("1.0.1");
+    expect(packageJson.version).toBe("1.0.0");
     expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
@@ -229,13 +229,13 @@ describe("TraceDockReporter", () => {
   });
 
   it("writes a portable ZIP to a configured directory when live publishing is unavailable", async () => {
-    delete process.env.TRACEDOCK_TOKEN;
+    delete process.env.TRACEOPTIX_TOKEN;
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TraceDockReporter({
+    const reporter = new TraceOptixReporter({
       junitFile: "reports/junit.xml",
       bundle: { outputDir: "portable-output" },
     });
@@ -252,9 +252,9 @@ describe("TraceDockReporter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     const bundles = await readdir(join(directory, "portable-output"));
     expect(bundles).toHaveLength(1);
-    expect(bundles[0]).toMatch(/\.tracedock-run\.zip$/);
+    expect(bundles[0]).toMatch(/\.traceoptix-run\.zip$/);
     const warnings = stderr.mock.calls.flat().join("");
-    expect(warnings).toContain("TraceDock results were not published");
+    expect(warnings).toContain("TraceOptix results were not published");
     expect(warnings).toContain(
       `Portable run bundle retained at: ${join(directory, "portable-output", bundles[0]!)}`,
     );
@@ -269,7 +269,7 @@ describe("TraceDockReporter", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TraceDockReporter({
+    const reporter = new TraceOptixReporter({
       junitFile: "reports/junit.xml",
       url: "https://localhost:3000",
       bundle: { outputDir: "fallback-bundles" },
@@ -288,12 +288,12 @@ describe("TraceDockReporter", () => {
       expect.objectContaining({ method: "GET" }),
     );
     const warnings = stderr.mock.calls.flat().join("");
-    expect(warnings).toContain("Conflicting TraceDock URLs were detected at startup");
+    expect(warnings).toContain("Conflicting TraceOptix URLs were detected at startup");
     expect(warnings).toContain("Selected playwright.config.ts url: https://localhost:3000");
-    expect(warnings).toContain("Ignored TRACEDOCK_URL: https://tracedock.example");
+    expect(warnings).toContain("Ignored TRACEOPTIX_URL: https://traceoptix.example");
     expect(warnings).toContain("Inside CI, loopback points to the build agent");
     expect(warnings).toContain("Could not resolve the project publishing mode");
-    expect(warnings).toContain("TraceDock results were not published");
+    expect(warnings).toContain("TraceOptix results were not published");
     expect(warnings).toContain("Portable run bundle retained at:");
     expect(warnings).not.toContain("secret");
 
@@ -339,7 +339,7 @@ describe("TraceDockReporter", () => {
       }),
     );
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [testCase()] });
     reporter.onTestEnd(testCase(), {
       retry: 0,
@@ -376,27 +376,27 @@ describe("TraceDockReporter", () => {
     });
     expect(String(calls[1]?.init.body)).not.toContain("secret");
     expect(stdout.mock.calls.flat().join(" ")).toContain("Published Summary-only run");
-    await expect(readdir(join(directory, "reports", "tracedock-bundles"))).rejects.toThrow();
+    await expect(readdir(join(directory, "reports", "traceoptix-bundles"))).rejects.toThrow();
   });
 
   it("skips as one gate when credentials are incomplete", () => {
-    delete process.env.TRACEDOCK_TOKEN;
+    delete process.env.TRACEOPTIX_TOKEN;
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
 
     expect(fetchMock).not.toHaveBeenCalled();
     const output = stderr.mock.calls.flat().join("");
-    expect(output).toContain("TraceDock reporter is not configured");
-    expect(output).toContain("Missing configuration: TRACEDOCK_TOKEN");
-    expect(output).toContain("TRACEDOCK_URL=https://tracedock.example.com");
-    expect(output).toContain("TRACEDOCK_RUN_NAME=checkout-e2e");
-    expect(output).toContain("TRACEDOCK_CI_JOB_URL=https://ci.example/jobs/12001");
-    expect(output).toContain("withTraceDockDefaults");
-    expect(output).toContain("['@tracedock/playwright', { junitFile }]");
+    expect(output).toContain("TraceOptix reporter is not configured");
+    expect(output).toContain("Missing configuration: TRACEOPTIX_TOKEN");
+    expect(output).toContain("TRACEOPTIX_URL=https://traceoptix.example.com");
+    expect(output).toContain("TRACEOPTIX_RUN_NAME=checkout-e2e");
+    expect(output).toContain("TRACEOPTIX_CI_JOB_URL=https://ci.example/jobs/12001");
+    expect(output).toContain("withTraceOptixDefaults");
+    expect(output).toContain("['@traceoptix/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
   });
 
@@ -410,23 +410,23 @@ describe("TraceDockReporter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
 
     const output = stderr.mock.calls.flat().join("");
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(output).toContain("TraceDock run context is incomplete; publishing will continue");
-    expect(output).toContain("TRACEDOCK_RUN_NAME (or reporter name option)");
-    expect(output).toContain("TRACEDOCK_CI_BUILD_ID or TRACEDOCK_CI_BUILD_NUMBER");
-    expect(output).toContain("TRACEDOCK_CI_JOB_NAME");
-    expect(output).toContain("TRACEDOCK_CI_JOB_URL or TRACEDOCK_CI_PIPELINE_URL");
+    expect(output).toContain("TraceOptix run context is incomplete; publishing will continue");
+    expect(output).toContain("TRACEOPTIX_RUN_NAME (or reporter name option)");
+    expect(output).toContain("TRACEOPTIX_CI_BUILD_ID or TRACEOPTIX_CI_BUILD_NUMBER");
+    expect(output).toContain("TRACEOPTIX_CI_JOB_NAME");
+    expect(output).toContain("TRACEOPTIX_CI_JOB_URL or TRACEOPTIX_CI_PIPELINE_URL");
     expect(output).toMatch(/Run name for this publication: Playwright run-\d{8}T\d{9}Z/);
   });
 
   it("does not publish during Playwright test discovery", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
 
     reporter.onBegin(
       { ...config(directory), argv: ["node", "playwright", "test", "--list"] },
@@ -442,7 +442,7 @@ describe("TraceDockReporter", () => {
   it("recognizes discovery on Playwright versions that do not expose config.argv", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     const originalArguments = process.argv;
     process.argv = ["node", "playwright", "test", "--list"];
     try {
@@ -465,7 +465,7 @@ describe("TraceDockReporter", () => {
       }),
     );
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
 
     reporter.onBegin(config(directory), { allTests: () => [] });
     await reporter.onExit();

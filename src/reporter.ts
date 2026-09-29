@@ -6,7 +6,7 @@ import { PortableRunBundle, resolveBundleMode, type BundleMode } from "./bundle.
 import {
   HttpError,
   Semaphore,
-  TraceDockClient,
+  TraceOptixClient,
   type ArtifactUpload,
   type CreateRunResponse,
   type PublishCapabilitiesResponse,
@@ -21,12 +21,12 @@ import type {
   ReporterSuite,
   ReporterTestCase,
   ReporterTestResult,
-  TraceDockCiOptions,
-  TraceDockReporterOptions,
+  TraceOptixCiOptions,
+  TraceOptixReporterOptions,
 } from "./types.js";
 
 interface ActiveRun {
-  client: TraceDockClient;
+  client: TraceOptixClient;
   response: CreateRunResponse;
   reportUpload: ArtifactUpload;
   junitPath: string;
@@ -36,7 +36,7 @@ interface ActiveRun {
 
 interface PublishSettings {
   baseUrl: string;
-  baseUrlSource: "playwright.config.ts url option" | "TRACEDOCK_URL";
+  baseUrlSource: "playwright.config.ts url option" | "TRACEOPTIX_URL";
   token: string;
   project: string;
   organization?: string;
@@ -51,7 +51,7 @@ interface ResolvedPaths {
 type PublishMode = "full" | "summary_only";
 
 interface SummaryPublication {
-  client: TraceDockClient;
+  client: TraceOptixClient;
   summaryUrl: string;
   bundleId: string;
   baseUrl: string;
@@ -62,10 +62,10 @@ interface SummaryPublication {
 }
 
 const CONFIGURATION_GUIDE =
-  "https://github.com/nityagautam/TraceDock/tree/v1/src/packages/playwright-reporter-plugin#configure";
+  "https://github.com/nityagautam/traceoptix-playwright#configure";
 
-export default class TraceDockReporter {
-  private readonly options: TraceDockReporterOptions;
+export default class TraceOptixReporter {
+  private readonly options: TraceOptixReporterOptions;
   private readonly uploads: Semaphore;
   private runPromise: Promise<ActiveRun | null> | undefined;
   private modePromise: Promise<PublishMode | null> | undefined;
@@ -81,7 +81,7 @@ export default class TraceDockReporter {
   private bundleSuppressedReason: string | undefined;
   private summary: SummaryPublication | undefined;
 
-  constructor(options: TraceDockReporterOptions = { junitFile: "" }) {
+  constructor(options: TraceOptixReporterOptions = { junitFile: "" }) {
     this.options = options;
     const requested = Math.floor(options.uploadConcurrency ?? 3);
     this.uploads = new Semaphore(
@@ -157,7 +157,7 @@ export default class TraceDockReporter {
     if (configuredBaseUrl) {
       this.publishTarget = {
         baseUrl: configuredBaseUrl,
-        source: first(this.options.url) ? "playwright.config.ts url option" : "TRACEDOCK_URL",
+        source: first(this.options.url) ? "playwright.config.ts url option" : "TRACEOPTIX_URL",
       };
     }
     const publishSettings = this.resolvePublishSettings();
@@ -202,7 +202,7 @@ export default class TraceDockReporter {
     };
     this.reportPublishingPlan(publishSettings, paths);
 
-    const client = new TraceDockClient(publishSettings.baseUrl, publishSettings.token);
+    const client = new TraceOptixClient(publishSettings.baseUrl, publishSettings.token);
     const commonBody = {
       project: publishSettings.project,
       name: runName,
@@ -388,7 +388,7 @@ export default class TraceDockReporter {
           const outputPath = await this.bundle.finalize(junitPath);
           bundleOutputPath = outputPath;
           this.output(`Portable run bundle: ${outputPath}`);
-          this.output("Upload this ZIP from the TraceDock project Upload page.");
+          this.output("Upload this ZIP from the TraceOptix project Upload page.");
         } else {
           await this.bundle.discard();
         }
@@ -516,7 +516,7 @@ export default class TraceDockReporter {
       );
       if (declared.uploads.length !== attachments.length) {
         throw new Error(
-          `TraceDock returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
+          `TraceOptix returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
         );
       }
       await Promise.all(
@@ -539,9 +539,9 @@ export default class TraceDockReporter {
     const token = first(reporterEnv("TOKEN"));
     const project = first(this.options.project, reporterEnv("PROJECT"));
     const missing = [
-      !baseUrl ? "TRACEDOCK_URL" : undefined,
-      !token ? "TRACEDOCK_TOKEN" : undefined,
-      !project ? "TRACEDOCK_PROJECT (or reporter project option)" : undefined,
+      !baseUrl ? "TRACEOPTIX_URL" : undefined,
+      !token ? "TRACEOPTIX_TOKEN" : undefined,
+      !project ? "TRACEOPTIX_PROJECT (or reporter project option)" : undefined,
     ].filter((value): value is string => value !== undefined);
     if (missing.length > 0) return `missing ${missing.join(", ")}`;
     if (!baseUrl || !token || !project) {
@@ -551,15 +551,15 @@ export default class TraceDockReporter {
     try {
       const url = new URL(baseUrl);
       if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return "TRACEDOCK_URL must use http or https";
+        return "TRACEOPTIX_URL must use http or https";
       }
     } catch {
-      return "TRACEDOCK_URL is not a valid URL";
+      return "TRACEOPTIX_URL is not a valid URL";
     }
 
     return {
       baseUrl,
-      baseUrlSource: optionUrl ? "playwright.config.ts url option" : "TRACEDOCK_URL",
+      baseUrlSource: optionUrl ? "playwright.config.ts url option" : "TRACEOPTIX_URL",
       token,
       project,
       organization: first(this.options.organization, reporterEnv("ORG")),
@@ -581,12 +581,12 @@ export default class TraceDockReporter {
       bundleMode: resolveBundleMode(requestedMode),
       bundleOutputDirectory: bundleOutput
         ? resolve(configDirectory, bundleOutput)
-        : join(dirname(junitPath), "tracedock-bundles"),
+        : join(dirname(junitPath), "traceoptix-bundles"),
     };
   }
 
   private warn(message: string): void {
-    process.stderr.write(`[tracedock] Warning: ${safeErrorMessage(message)}\n`);
+    process.stderr.write(`[traceoptix] Warning: ${safeErrorMessage(message)}\n`);
   }
 
   private reportPublishingPlan(settings: PublishSettings, paths: ResolvedPaths): void {
@@ -602,9 +602,9 @@ export default class TraceDockReporter {
       normalizedBaseUrl(optionUrl) !== normalizedBaseUrl(environmentUrl)
     ) {
       this.warningLines([
-        "Conflicting TraceDock URLs were detected at startup.",
+        "Conflicting TraceOptix URLs were detected at startup.",
         `Selected playwright.config.ts url: ${publicBaseUrl(optionUrl)}.`,
-        `Ignored TRACEDOCK_URL: ${publicBaseUrl(environmentUrl)}.`,
+        `Ignored TRACEOPTIX_URL: ${publicBaseUrl(environmentUrl)}.`,
         "Reporter options take precedence over environment fallbacks.",
         `Capability negotiation will use ${selectedUrl}.`,
         bundlePlanMessage(paths.bundleMode, paths.bundleOutputDirectory),
@@ -613,10 +613,10 @@ export default class TraceDockReporter {
 
     if (isLoopbackUrl(settings.baseUrl)) {
       const detail = environmentFlag(process.env.CI)
-        ? "Inside CI, loopback points to the build agent rather than your TraceDock server."
-        : "Ensure TraceDock is running locally and, for HTTPS, that its certificate is trusted.";
+        ? "Inside CI, loopback points to the build agent rather than your TraceOptix server."
+        : "Ensure TraceOptix is running locally and, for HTTPS, that its certificate is trusted.";
       this.warningLines([
-        `The selected TraceDock URL uses a loopback host: ${selectedUrl}.`,
+        `The selected TraceOptix URL uses a loopback host: ${selectedUrl}.`,
         detail,
       ]);
     }
@@ -624,7 +624,7 @@ export default class TraceDockReporter {
 
   private reportFinalPublicationStatus(bundleOutputPath?: string, bundleError?: string): void {
     if (!this.reportingAttempted || this.publicationSucceeded) return;
-    const lines = ["TraceDock results were not published."];
+    const lines = ["TraceOptix results were not published."];
     if (this.publishTarget) {
       lines.push(
         `Publishing target: ${publicBaseUrl(this.publishTarget.baseUrl)} (${this.publishTarget.source}).`,
@@ -632,7 +632,7 @@ export default class TraceDockReporter {
     }
     if (bundleOutputPath) {
       lines.push(`Portable run bundle retained at: ${singleLine(bundleOutputPath)}.`);
-      lines.push("Upload this ZIP from the TraceDock project Upload page.");
+      lines.push("Upload this ZIP from the TraceOptix project Upload page.");
     } else if (this.bundlePlan?.mode === "off") {
       lines.push("No portable run bundle was created because bundle mode is off.");
     } else if (this.bundleSuppressedReason) {
@@ -654,7 +654,7 @@ export default class TraceDockReporter {
 
   private warningLines(lines: readonly string[]): void {
     process.stderr.write(
-      `${lines.map((line) => `[tracedock] Warning: ${singleLine(line)}`).join("\n")}\n`,
+      `${lines.map((line) => `[traceoptix] Warning: ${singleLine(line)}`).join("\n")}\n`,
     );
   }
 
@@ -668,26 +668,26 @@ export default class TraceDockReporter {
    */
   private configurationWarning(reason: string): void {
     const lines = [
-      "TraceDock reporter is not configured; this run will not be published.",
+      "TraceOptix reporter is not configured; this run will not be published.",
       `Missing configuration: ${reason.replace(/^missing\s+/, "")}.`,
       "Configure the environment:",
-      "  TRACEDOCK_URL=https://tracedock.example.com",
-      "  TRACEDOCK_TOKEN=td_...",
-      "  TRACEDOCK_PROJECT=checkout-web",
+      "  TRACEOPTIX_URL=https://traceoptix.example.com",
+      "  TRACEOPTIX_TOKEN=td_...",
+      "  TRACEOPTIX_PROJECT=checkout-web",
       "Configure run and CI context (recommended):",
-      "  TRACEDOCK_RUN_NAME=checkout-e2e",
-      "  TRACEDOCK_CI_PROVIDER=github",
-      "  TRACEDOCK_CI_BUILD_NUMBER=84",
-      "  TRACEDOCK_CI_PIPELINE_NAME='Nightly regression'",
-      "  TRACEDOCK_CI_JOB_NAME=playwright-chromium",
-      "  TRACEDOCK_CI_JOB_URL=https://ci.example/jobs/12001",
-      "Configure playwright.config.ts with evidence defaults plus the JUnit and TraceDock reporters:",
-      "  import { withTraceDockDefaults } from '@tracedock/playwright';",
+      "  TRACEOPTIX_RUN_NAME=checkout-e2e",
+      "  TRACEOPTIX_CI_PROVIDER=github",
+      "  TRACEOPTIX_CI_BUILD_NUMBER=84",
+      "  TRACEOPTIX_CI_PIPELINE_NAME='Nightly regression'",
+      "  TRACEOPTIX_CI_JOB_NAME=playwright-chromium",
+      "  TRACEOPTIX_CI_JOB_URL=https://ci.example/jobs/12001",
+      "Configure playwright.config.ts with evidence defaults plus the JUnit and TraceOptix reporters:",
+      "  import { withTraceOptixDefaults } from '@traceoptix/playwright';",
       "  const junitFile = 'test-results/junit.xml';",
-      "  export default defineConfig(withTraceDockDefaults({",
+      "  export default defineConfig(withTraceOptixDefaults({",
       "    reporter: [",
       "      ['junit', { outputFile: junitFile, includeRetries: true }],",
-      "      ['@tracedock/playwright', { junitFile }],",
+      "      ['@traceoptix/playwright', { junitFile }],",
       "    ],",
       "  }));",
       ...(this.bundlePlan
@@ -695,30 +695,30 @@ export default class TraceDockReporter {
         : []),
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[tracedock] ${line}`).join("\n")}\n`);
+    process.stderr.write(`${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`);
   }
 
   /** Missing labels should be discoverable without making observability break the test command. */
   private runContextWarning(missing: readonly string[], runName: string): void {
     const lines = [
-      "TraceDock run context is incomplete; publishing will continue.",
+      "TraceOptix run context is incomplete; publishing will continue.",
       `Missing configuration: ${missing.join(", ")}.`,
       `Run name for this publication: ${runName}.`,
-      "Set reporter options (name, ci) or the corresponding TRACEDOCK_RUN_NAME and TRACEDOCK_CI_* environment variables.",
+      "Set reporter options (name, ci) or the corresponding TRACEOPTIX_RUN_NAME and TRACEOPTIX_CI_* environment variables.",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[tracedock] ${line}`).join("\n")}\n`);
+    process.stderr.write(`${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`);
   }
 
   private output(message: string): void {
-    process.stdout.write(`[tracedock] ${message}\n`);
+    process.stdout.write(`[traceoptix] ${message}\n`);
   }
 
   private async writeGithubSummary(runUrl: string): Promise<void> {
     const summary = process.env.GITHUB_STEP_SUMMARY;
     if (!summary) return;
     try {
-      await appendFile(summary, `\n[TraceDock run](${runUrl})\n`, "utf8");
+      await appendFile(summary, `\n[TraceOptix run](${runUrl})\n`, "utf8");
     } catch (error) {
       this.warn(`Could not update the GitHub job summary: ${safeErrorMessage(error)}`);
     }
@@ -745,18 +745,18 @@ function defaultRunName(buildNumber: string | undefined): string {
 
 function missingRunContext(
   configuredRunName: string | undefined,
-  ci: TraceDockCiOptions | undefined,
+  ci: TraceOptixCiOptions | undefined,
 ): string[] {
   return [
-    !configuredRunName ? "TRACEDOCK_RUN_NAME (or reporter name option)" : undefined,
-    !ci?.provider ? "TRACEDOCK_CI_PROVIDER" : undefined,
+    !configuredRunName ? "TRACEOPTIX_RUN_NAME (or reporter name option)" : undefined,
+    !ci?.provider ? "TRACEOPTIX_CI_PROVIDER" : undefined,
     !ci?.buildId && !ci?.buildNumber
-      ? "TRACEDOCK_CI_BUILD_ID or TRACEDOCK_CI_BUILD_NUMBER"
+      ? "TRACEOPTIX_CI_BUILD_ID or TRACEOPTIX_CI_BUILD_NUMBER"
       : undefined,
-    !ci?.pipelineName ? "TRACEDOCK_CI_PIPELINE_NAME (or TRACEDOCK_CI_BUILD_NAME)" : undefined,
-    !ci?.jobName ? "TRACEDOCK_CI_JOB_NAME" : undefined,
+    !ci?.pipelineName ? "TRACEOPTIX_CI_PIPELINE_NAME (or TRACEOPTIX_CI_BUILD_NAME)" : undefined,
+    !ci?.jobName ? "TRACEOPTIX_CI_JOB_NAME" : undefined,
     !ci?.jobUrl && !ci?.pipelineUrl
-      ? "TRACEDOCK_CI_JOB_URL or TRACEDOCK_CI_PIPELINE_URL"
+      ? "TRACEOPTIX_CI_JOB_URL or TRACEOPTIX_CI_PIPELINE_URL"
       : undefined,
   ].filter((value): value is string => value !== undefined);
 }
@@ -828,7 +828,7 @@ function singleLine(value: string): string {
 }
 
 function reporterEnv(name: string): string | undefined {
-  return first(process.env[`TRACEDOCK_${name}`]);
+  return first(process.env[`TRACEOPTIX_${name}`]);
 }
 
 function removeUndefined<Value extends object>(input: Value): Value {

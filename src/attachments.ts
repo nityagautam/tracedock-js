@@ -161,7 +161,7 @@ export function classifyAttachment(attachment: ReporterAttachment): {
 export function junitSuiteName(test: ReporterTestCase, rootDir: string): string | undefined {
   const titlePath = test.titlePath();
   // Playwright's hierarchy is root, project, file, then describes/test. Its JUnit reporter uses
-  // the file suite's title as `classname`, so index 2 is the exact identity TraceDock parses.
+  // the file suite's title as `classname`, so index 2 is the exact identity TraceOptix parses.
   const fileSuite = titlePath[2];
   if (fileSuite?.trim()) return fileSuite.slice(0, 500);
 

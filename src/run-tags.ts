@@ -41,7 +41,7 @@ function parseEnvironmentTags(
     try {
       const parsed = JSON.parse(input) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        warn("Ignoring TRACEDOCK_RUN_TAGS because its JSON value must be an object.");
+        warn("Ignoring TRACEOPTIX_RUN_TAGS because its JSON value must be an object.");
         return {};
       }
       const tags: Record<string, string> = {};
@@ -52,7 +52,7 @@ function parseEnvironmentTags(
           typeof rawValue !== "boolean"
         ) {
           warn(
-            `Ignoring TRACEDOCK_RUN_TAGS entry "${key}" because its value is not a string, number, or boolean.`,
+            `Ignoring TRACEOPTIX_RUN_TAGS entry "${key}" because its value is not a string, number, or boolean.`,
           );
           continue;
         }
@@ -60,7 +60,7 @@ function parseEnvironmentTags(
       }
       return tags;
     } catch {
-      warn("Ignoring TRACEDOCK_RUN_TAGS because it is not valid JSON.");
+      warn("Ignoring TRACEOPTIX_RUN_TAGS because it is not valid JSON.");
       return {};
     }
   }
@@ -74,7 +74,7 @@ function parseEnvironmentTags(
     const separator = equals > 0 ? equals : colon > 0 ? colon : -1;
     if (separator < 1 || !entry.slice(separator + 1).trim()) {
       warn(
-        `Ignoring malformed TRACEDOCK_RUN_TAGS entry "${entry}"; expected key=value or key:value.`,
+        `Ignoring malformed TRACEOPTIX_RUN_TAGS entry "${entry}"; expected key=value or key:value.`,
       );
       continue;
     }
