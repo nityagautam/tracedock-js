@@ -28,7 +28,7 @@ pnpm --filter @tracedock/playwright test
 mkdir -p /absolute/path/to/playwright-project/scripts/vendor
 npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
 cd /absolute/path/to/playwright-project
-npm install --save-dev ./scripts/vendor/tracedock-playwright-0.5.1.tgz
+npm install --save-dev ./scripts/vendor/tracedock-playwright-1.0.0.tgz
 ```
 
 `npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
