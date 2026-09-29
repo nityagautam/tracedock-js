@@ -1,6 +1,6 @@
 {
   "name": "@tracedock/playwright",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Playwright reporter for publishing JUnit results and test evidence to TraceDock",
   "homepage": "https://github.com/nityagautam/tracedock-js#readme",
   "bugs": {
