@@ -133,11 +133,17 @@ describe("TraceOptixReporter", () => {
     );
     reporter.onTestEnd(testCase(), result());
 
-    await mkdir(join(directory, "reports"), { recursive: true });
-    await writeFile(
-      join(directory, "reports", "junit.xml"),
-      '<testsuites><testsuite><testcase name="pays"/><testcase name="gift card"/></testsuite></testsuites>',
+    await vi.waitFor(() =>
+      expect(
+        calls.some(({ url }) => url.endsWith("/publish-capabilities")),
+      ).toBe(true),
     );
+    expect(calls.some(({ url }) => url.endsWith("/api/v1/runs"))).toBe(false);
+
+    await mkdir(join(directory, "reports"), { recursive: true });
+    const junit =
+      '<testsuites><testsuite><testcase name="pays"/><testcase name="gift card"/></testsuite></testsuites>';
+    await writeFile(join(directory, "reports", "junit.xml"), junit);
     await reporter.onExit();
 
     const create = calls.find(({ url }) => url.endsWith("/api/v1/runs"));
@@ -148,6 +154,14 @@ describe("TraceOptixReporter", () => {
     expect(createBody).toEqual(
       expect.objectContaining({ project: "checkout-web", framework: "playwright" }),
     );
+    expect(createBody.artifacts).toEqual([
+      {
+        filename: "junit.xml",
+        contentType: "application/xml",
+        bytes: Buffer.byteLength(junit),
+        format: "junit-xml",
+      },
+    ]);
     expect(createBody.sourceBundleId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
@@ -222,7 +236,7 @@ describe("TraceOptixReporter", () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("1.0.0");
+    expect(packageJson.version).toBe("1.0.1");
     expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");

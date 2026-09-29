@@ -17,24 +17,24 @@ npm pack . --pack-destination /absolute/path/to/playwright-project/scripts/vendo
 ```
 
 The final line printed by npm is the archive filename. For the current package version it is
-`traceoptix-playwright-1.0.0.tgz`.
+`traceoptix-playwright-1.0.1.tgz`.
 
 From the Playwright project root, install that exact file:
 
 ```bash
-npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.0.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 If a workflow intentionally updates only `package.json` and `package-lock.json`, use:
 
 ```bash
 npm install --save-dev --package-lock-only --ignore-scripts \
-  @traceoptix/playwright@file:scripts/vendor/traceoptix-playwright-1.0.0.tgz
+  @traceoptix/playwright@file:scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 `--package-lock-only` does not install anything into `node_modules`; omit it for a usable local
 installation. The version in the install command must exactly match the `.tgz` filename emitted by
-`npm pack`. For example, a command naming `0.5.0` cannot install the current `1.0.0` archive.
+`npm pack`. For example, a command naming `1.0.0` cannot install the current `1.0.1` archive.
 
 Prerequisites:
 

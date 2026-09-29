@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PreparedAttachment } from "./attachments.js";
 import type { TestPriorityDeclaration } from "./priorities.js";
@@ -85,7 +85,6 @@ export class PortableRunBundle {
     steps: StepBatch | null;
     attachments: readonly PreparedAttachment[];
   }): Promise<void> {
-    if (this.mode === "off") return;
     if (this.evidenceFileCount + input.attachments.length > MAX_PORTABLE_BUNDLE_EVIDENCE_FILES) {
       throw new Error(
         `portable bundle evidence exceeds ${MAX_PORTABLE_BUNDLE_EVIDENCE_FILES} files`,
@@ -120,6 +119,40 @@ export class PortableRunBundle {
       steps: input.steps?.steps ?? [],
       evidence,
     });
+  }
+
+  async *stagedAttempts(): AsyncGenerator<{
+    test: string;
+    steps: StepBatch | null;
+    attachments: PreparedAttachment[];
+  }> {
+    for (const attempt of this.attempts) {
+      const steps: StepBatch | null =
+        attempt.steps.length === 0
+          ? null
+          : {
+              ...(attempt.suite ? { suite: attempt.suite } : {}),
+              test: attempt.test,
+              attempt: attempt.attempt,
+              steps: attempt.steps,
+            };
+      const attachments = await Promise.all(
+        attempt.evidence.map(async (evidence): Promise<PreparedAttachment> => ({
+          declaration: {
+            kind: evidence.kind,
+            name: evidence.name,
+            contentType: evidence.contentType,
+            bytes: evidence.bytes,
+            ...(attempt.suite ? { suite: attempt.suite } : {}),
+            test: attempt.test,
+            attempt: attempt.attempt,
+            ...(evidence.stepId ? { stepId: evidence.stepId } : {}),
+          },
+          body: await readFile(join(this.stageRoot, ...evidence.path.split("/"))),
+        })),
+      );
+      yield { test: attempt.test, steps, attachments };
+    }
   }
 
   async finalize(junitPath: string): Promise<string> {

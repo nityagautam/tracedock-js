@@ -28,7 +28,7 @@ pnpm --filter @traceoptix/playwright test
 mkdir -p /absolute/path/to/playwright-project/scripts/vendor
 npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
 cd /absolute/path/to/playwright-project
-npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.0.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 `npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
@@ -130,7 +130,8 @@ late to change what Playwright records.
 
 The TraceOptix reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
-JUnit reporter; TraceOptix receives the final version.
+JUnit reporter; TraceOptix receives the final version. Full-detail publication also starts there so
+the reporter can declare the final JUnit byte size before TraceOptix issues its upload URL.
 
 ### Server-selected Summary-only mode
 
@@ -380,8 +381,9 @@ Ordinary JUnit uploads remain supported and do not declare priorities automatica
 ## Evidence behavior
 
 The reporter consumes `result.attachments` directly, so it does not infer testcase identity from
-folder names. It batches the declarations for one test, uploads evidence while later tests are
-still running, and records Playwright's zero-based retry number.
+folder names. It stages each test's declarations and evidence on bounded local disk while tests run,
+then publishes them after creating the run with the final JUnit byte size. It records Playwright's
+zero-based retry number.
 
 - PNG/JPEG/WebP/GIF attachments become screenshots; names containing `diff` become visual diffs.
 - WebM and MP4 attachments become videos.
@@ -431,8 +433,9 @@ reporter configuration when CI collects artifacts from a specific directory:
 
 `always` is the default so a portable result exists whether live publishing succeeds or not.
 `on-failure` keeps it only when run creation, step/evidence publication, JUnit upload, or completion
-is incomplete. `off` disables local staging and ZIP creation. The equivalent environment variables
-are `TRACEOPTIX_BUNDLE_MODE` and `TRACEOPTIX_BUNDLE_OUTPUT_DIR`.
+is incomplete. `off` disables ZIP creation; Full-detail live publication still uses a temporary
+disk stage and removes it during `onExit`. The equivalent environment variables are
+`TRACEOPTIX_BUNDLE_MODE` and `TRACEOPTIX_BUNDLE_OUTPUT_DIR`.
 
 To publish later, open the target project's **Upload** page and select the ZIP by itself. Test
 Center validates it in the background and restores the same results, priorities, steps, retries
