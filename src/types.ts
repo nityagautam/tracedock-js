@@ -30,7 +30,7 @@ export interface TraceDockReporterOptions {
   project?: string;
   /** JUnit file written by Playwright's built-in junit reporter. */
   junitFile: string;
-  /** TraceDock origin. Falls back to TRACEDOCK_URL. */
+  /** TraceDock origin. Overrides TRACEDOCK_URL; differing values produce a startup warning. */
   url?: string;
   /** Optional organization slug used only to print the final browser URL. */
   organization?: string;
@@ -44,6 +44,7 @@ export interface TraceDockReporterOptions {
   pullRequest?: number;
   /** Explicit CI fields override TRACEDOCK_CI_* and provider-detected values. */
   ci?: TraceDockCiOptions;
+  /** Run tags. Values override matching TRACEDOCK_RUN_TAGS entries. */
   tags?: Record<string, string>;
   /** Detect @p0–@p3 Playwright tags and synchronize testcase priority. Defaults to true. */
   priority?: { fromTags?: boolean };
@@ -57,13 +58,6 @@ export interface TraceDockReporterOptions {
     outputDir?: string;
   };
 }
-
-/** @deprecated Use `TraceDockCiProvider`. */
-export type TestCenterCiProvider = TraceDockCiProvider;
-/** @deprecated Use `TraceDockCiOptions`. */
-export type TestCenterCiOptions = TraceDockCiOptions;
-/** @deprecated Use `TraceDockReporterOptions`. */
-export type TestCenterReporterOptions = TraceDockReporterOptions;
 
 export interface ReporterAttachment {
   name: string;

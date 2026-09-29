@@ -83,17 +83,4 @@ describe("CI metadata detection", () => {
       pipelineUrl: "https://github.example/acme/checkout/actions/runs/9001",
     });
   });
-
-  it("accepts legacy Test Center CI environment variables", () => {
-    expect(
-      resolveCiContext(
-        {},
-        {
-          TESTCENTER_CI_BUILD_NUMBER: "84",
-          TESTCENTER_CI_JOB_NAME: "Legacy browser tests",
-        },
-        { provider: "unknown" },
-      ),
-    ).toMatchObject({ buildNumber: "84", jobName: "Legacy browser tests" });
-  });
 });

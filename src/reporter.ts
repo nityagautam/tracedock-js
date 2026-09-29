@@ -14,6 +14,7 @@ import {
 import { detectMetadata, resolveCiContext } from "./metadata.js";
 import { prepareTestPriorities, priorityTagsEnabled } from "./priorities.js";
 import { formatRunName } from "./run-name.js";
+import { resolveRunTags } from "./run-tags.js";
 import { prepareSteps } from "./steps.js";
 import type {
   ReporterFullConfig,
@@ -35,6 +36,7 @@ interface ActiveRun {
 
 interface PublishSettings {
   baseUrl: string;
+  baseUrlSource: "playwright.config.ts url option" | "TRACEDOCK_URL";
   token: string;
   project: string;
   organization?: string;
@@ -60,7 +62,7 @@ interface SummaryPublication {
 }
 
 const CONFIGURATION_GUIDE =
-  "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/playwright-reporter-plugin#configure";
+  "https://github.com/nityagautam/TraceDock/tree/v1/src/packages/playwright-reporter-plugin#configure";
 
 export default class TraceDockReporter {
   private readonly options: TraceDockReporterOptions;
@@ -72,6 +74,11 @@ export default class TraceDockReporter {
   private junitPath: string | undefined;
   private bundle: PortableRunBundle | undefined;
   private publishFailed = false;
+  private publicationSucceeded = false;
+  private reportingAttempted = false;
+  private publishTarget: { baseUrl: string; source: PublishSettings["baseUrlSource"] } | undefined;
+  private bundlePlan: { mode: BundleMode; outputDirectory: string } | undefined;
+  private bundleSuppressedReason: string | undefined;
   private summary: SummaryPublication | undefined;
 
   constructor(options: TraceDockReporterOptions = { junitFile: "" }) {
@@ -90,6 +97,7 @@ export default class TraceDockReporter {
     // `playwright test --list` initializes reporters but executes nothing. It must remain a
     // read-only discovery command rather than leaving an empty pending run behind.
     if (config.argv?.includes("--list") || process.argv.includes("--list")) return;
+    this.reportingAttempted = true;
     this.rootDir = config.rootDir;
     const paths = this.resolvePaths(config);
     if (typeof paths === "string") {
@@ -97,6 +105,10 @@ export default class TraceDockReporter {
       return;
     }
     this.junitPath = paths.junitPath;
+    this.bundlePlan = {
+      mode: paths.bundleMode,
+      outputDirectory: paths.bundleOutputDirectory,
+    };
     const allTests = suite.allTests();
     const testPriorities = priorityTagsEnabled(
       this.options.priority?.fromTags,
@@ -131,7 +143,23 @@ export default class TraceDockReporter {
     );
     const missingContext = missingRunContext(configuredRunName, ci);
     if (missingContext.length > 0) this.runContextWarning(missingContext, runName);
+    const runTags = resolveRunTags(
+      reporterEnv("RUN_TAGS"),
+      this.options.tags,
+      {
+        "playwright-version": config.version,
+        "test-count": String(allTests.length),
+      },
+      (message) => this.warn(message),
+    );
     const bundleId = randomUUID();
+    const configuredBaseUrl = first(this.options.url, reporterEnv("URL"));
+    if (configuredBaseUrl) {
+      this.publishTarget = {
+        baseUrl: configuredBaseUrl,
+        source: first(this.options.url) ? "playwright.config.ts url option" : "TRACEDOCK_URL",
+      };
+    }
     const publishSettings = this.resolvePublishSettings();
     const projectHint =
       typeof publishSettings === "string"
@@ -156,11 +184,7 @@ export default class TraceDockReporter {
           startedAt: startedAt.toISOString(),
           ci,
           shard,
-          tags: normalizeTags({
-            ...this.options.tags,
-            "playwright-version": config.version,
-            "test-count": String(allTests.length),
-          }),
+          tags: runTags,
         }),
         testPriorities,
       });
@@ -171,6 +195,12 @@ export default class TraceDockReporter {
       this.configurationWarning(publishSettings);
       return;
     }
+
+    this.publishTarget = {
+      baseUrl: publishSettings.baseUrl,
+      source: publishSettings.baseUrlSource,
+    };
+    this.reportPublishingPlan(publishSettings, paths);
 
     const client = new TraceDockClient(publishSettings.baseUrl, publishSettings.token);
     const commonBody = {
@@ -184,11 +214,7 @@ export default class TraceDockReporter {
       startedAt: startedAt.toISOString(),
       ci,
       shard,
-      tags: normalizeTags({
-        ...this.options.tags,
-        "playwright-version": config.version,
-        "test-count": String(allTests.length),
-      }),
+      tags: runTags,
       sourceBundleId: bundleId,
     };
 
@@ -216,6 +242,8 @@ export default class TraceDockReporter {
             }),
             outcomes: new Map(),
           };
+          this.bundleSuppressedReason =
+            "the server selected Summary-only mode, which does not collect detailed bundle data";
           this.output(
             `Summary-only mode: publishing aggregate counts without test details or evidence (${capability.summary.remaining} runs remaining).`,
           );
@@ -269,7 +297,10 @@ export default class TraceDockReporter {
         // server. The Playwright command remains warning-only, as publishing always has been.
         this.publishFailed = true;
         this.warn(`Could not resolve the project publishing mode: ${safeErrorMessage(error)}`);
-        return null;
+        // Capability failure must still enter the ordinary full-detail capture path. No data is
+        // sent to an unknown server policy, but steps and evidence remain available in the ZIP.
+        createPortableBundle();
+        return "full" as const;
       });
   }
 
@@ -301,11 +332,15 @@ export default class TraceDockReporter {
     const mode = this.modePromise ? await this.modePromise : this.bundle ? "full" : null;
     if (mode === "summary_only") {
       await this.publishSummary();
+      this.reportFinalPublicationStatus();
       return;
     }
     const run = this.runPromise ? await this.runPromise : null;
     const junitPath = this.junitPath;
-    if (!junitPath) return;
+    if (!junitPath) {
+      this.reportFinalPublicationStatus();
+      return;
+    }
 
     if (run) {
       try {
@@ -328,6 +363,7 @@ export default class TraceDockReporter {
         }
 
         const completed = await run.client.complete(run.response);
+        this.publicationSucceeded = true;
         if (completed.missingAttachments && completed.missingAttachments.length > 0) {
           this.publishFailed = true;
           this.warn(`${completed.missingAttachments.length} evidence upload(s) are missing.`);
@@ -343,20 +379,25 @@ export default class TraceDockReporter {
       this.publishFailed = true;
     }
 
+    let bundleOutputPath: string | undefined;
+    let bundleError: string | undefined;
     if (this.bundle) {
       const retain = this.bundle.mode === "always" || this.publishFailed;
       try {
         if (retain) {
           const outputPath = await this.bundle.finalize(junitPath);
+          bundleOutputPath = outputPath;
           this.output(`Portable run bundle: ${outputPath}`);
           this.output("Upload this ZIP from the TraceDock project Upload page.");
         } else {
           await this.bundle.discard();
         }
       } catch (error) {
-        this.warn(`Could not create the portable run bundle: ${safeErrorMessage(error)}`);
+        bundleError = safeErrorMessage(error);
+        this.warn(`Could not create the portable run bundle: ${bundleError}`);
       }
     }
+    this.reportFinalPublicationStatus(bundleOutputPath, bundleError);
   }
 
   private recordSummaryOutcome(test: ReporterTestCase, result: ReporterTestResult): void {
@@ -414,6 +455,7 @@ export default class TraceDockReporter {
         },
         summary.bundleId,
       );
+      this.publicationSucceeded = true;
       const runUrl = browserRunUrlFor(summary.baseUrl, summary.organization, response.runId);
       this.output(
         runUrl
@@ -491,7 +533,9 @@ export default class TraceDockReporter {
   }
 
   private resolvePublishSettings(): PublishSettings | string {
-    const baseUrl = first(this.options.url, reporterEnv("URL"));
+    const optionUrl = first(this.options.url);
+    const environmentUrl = reporterEnv("URL");
+    const baseUrl = first(optionUrl, environmentUrl);
     const token = first(reporterEnv("TOKEN"));
     const project = first(this.options.project, reporterEnv("PROJECT"));
     const missing = [
@@ -515,6 +559,7 @@ export default class TraceDockReporter {
 
     return {
       baseUrl,
+      baseUrlSource: optionUrl ? "playwright.config.ts url option" : "TRACEDOCK_URL",
       token,
       project,
       organization: first(this.options.organization, reporterEnv("ORG")),
@@ -542,6 +587,75 @@ export default class TraceDockReporter {
 
   private warn(message: string): void {
     process.stderr.write(`[tracedock] Warning: ${safeErrorMessage(message)}\n`);
+  }
+
+  private reportPublishingPlan(settings: PublishSettings, paths: ResolvedPaths): void {
+    const selectedUrl = publicBaseUrl(settings.baseUrl);
+    this.output(`Publishing target: ${selectedUrl} (${settings.baseUrlSource}).`);
+    this.output(bundlePlanMessage(paths.bundleMode, paths.bundleOutputDirectory));
+
+    const optionUrl = first(this.options.url);
+    const environmentUrl = reporterEnv("URL");
+    if (
+      optionUrl &&
+      environmentUrl &&
+      normalizedBaseUrl(optionUrl) !== normalizedBaseUrl(environmentUrl)
+    ) {
+      this.warningLines([
+        "Conflicting TraceDock URLs were detected at startup.",
+        `Selected playwright.config.ts url: ${publicBaseUrl(optionUrl)}.`,
+        `Ignored TRACEDOCK_URL: ${publicBaseUrl(environmentUrl)}.`,
+        "Reporter options take precedence over environment fallbacks.",
+        `Capability negotiation will use ${selectedUrl}.`,
+        bundlePlanMessage(paths.bundleMode, paths.bundleOutputDirectory),
+      ]);
+    }
+
+    if (isLoopbackUrl(settings.baseUrl)) {
+      const detail = environmentFlag(process.env.CI)
+        ? "Inside CI, loopback points to the build agent rather than your TraceDock server."
+        : "Ensure TraceDock is running locally and, for HTTPS, that its certificate is trusted.";
+      this.warningLines([
+        `The selected TraceDock URL uses a loopback host: ${selectedUrl}.`,
+        detail,
+      ]);
+    }
+  }
+
+  private reportFinalPublicationStatus(bundleOutputPath?: string, bundleError?: string): void {
+    if (!this.reportingAttempted || this.publicationSucceeded) return;
+    const lines = ["TraceDock results were not published."];
+    if (this.publishTarget) {
+      lines.push(
+        `Publishing target: ${publicBaseUrl(this.publishTarget.baseUrl)} (${this.publishTarget.source}).`,
+      );
+    }
+    if (bundleOutputPath) {
+      lines.push(`Portable run bundle retained at: ${singleLine(bundleOutputPath)}.`);
+      lines.push("Upload this ZIP from the TraceDock project Upload page.");
+    } else if (this.bundlePlan?.mode === "off") {
+      lines.push("No portable run bundle was created because bundle mode is off.");
+    } else if (this.bundleSuppressedReason) {
+      lines.push(`No portable run bundle was created because ${this.bundleSuppressedReason}.`);
+    } else if (bundleError) {
+      lines.push(`Portable run bundle creation failed: ${bundleError}.`);
+      if (this.bundlePlan) {
+        lines.push(
+          `Configured bundle output directory: ${singleLine(this.bundlePlan.outputDirectory)}.`,
+        );
+      }
+    } else if (this.bundlePlan) {
+      lines.push(
+        `No portable run bundle was created; configured output directory: ${singleLine(this.bundlePlan.outputDirectory)}.`,
+      );
+    }
+    this.warningLines(lines);
+  }
+
+  private warningLines(lines: readonly string[]): void {
+    process.stderr.write(
+      `${lines.map((line) => `[tracedock] Warning: ${singleLine(line)}`).join("\n")}\n`,
+    );
   }
 
   /**
@@ -576,6 +690,9 @@ export default class TraceDockReporter {
       "      ['@tracedock/playwright', { junitFile }],",
       "    ],",
       "  }));",
+      ...(this.bundlePlan
+        ? [bundlePlanMessage(this.bundlePlan.mode, this.bundlePlan.outputDirectory)]
+        : []),
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
     process.stderr.write(`${lines.map((line) => `[tracedock] ${line}`).join("\n")}\n`);
@@ -665,21 +782,53 @@ function first(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => value !== undefined && value.trim() !== "")?.trim();
 }
 
-/** New TraceDock names win while existing Test Center installations migrate without a flag day. */
-function reporterEnv(name: string): string | undefined {
-  return first(process.env[`TRACEDOCK_${name}`], process.env[`TESTCENTER_${name}`]);
+function publicBaseUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "(invalid URL)";
+  }
 }
 
-function normalizeTags(input: Record<string, string | undefined>): Record<string, string> {
-  const entries = Object.entries(input)
-    .map(([rawKey, rawValue]) => {
-      const key = rawKey.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 40);
-      const value = rawValue?.trim().slice(0, 200);
-      return key && value && /^[a-z0-9][a-z0-9_-]*$/.test(key) ? ([key, value] as const) : null;
-    })
-    .filter((entry): entry is readonly [string, string] => entry !== null)
-    .slice(0, 50);
-  return Object.fromEntries(entries);
+function normalizedBaseUrl(value: string): string {
+  return publicBaseUrl(value).toLowerCase().replace(/\/$/, "");
+}
+
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return (
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname === "0.0.0.0" ||
+      hostname.startsWith("127.")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function environmentFlag(value: string | undefined): boolean {
+  return value ? ["1", "true", "yes", "on"].includes(value.trim().toLowerCase()) : false;
+}
+
+function bundlePlanMessage(mode: BundleMode, outputDirectory: string): string {
+  return mode === "off"
+    ? "Portable bundle fallback: disabled (bundle mode is off)."
+    : `Portable bundle fallback: ${mode}; output directory: ${singleLine(outputDirectory)}.`;
+}
+
+function singleLine(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function reporterEnv(name: string): string | undefined {
+  return first(process.env[`TRACEDOCK_${name}`]);
 }
 
 function removeUndefined<Value extends object>(input: Value): Value {

@@ -5,14 +5,33 @@ files and logs to TraceDock. Evidence is linked to the testcase, retry and origi
 produced it. Publishing is warning-only: a TraceDock or object-storage outage never changes
 Playwright's exit code.
 
+Upload capacity is configured on the TraceDock server using `TRACEDOCK_UPLOAD_*`, not in
+this reporter's environment. Live publication uses signed per-file uploads, so the server's
+single-shot request cap does not apply. Evidence has fixed per-kind caps, and portable run ZIPs
+have separate archive/structure limits. In the server repository, see
+[`docs/upload-limits.md`](../../../docs/upload-limits.md) for the complete path/type matrix.
+
 ## Install
 
 ```bash
 npm install --save-dev @tracedock/playwright
 ```
 
-To build and install an unpublished local tarball on macOS, Linux, or Windows, follow
-[`LOCAL_DEVELOPMENT.md`](./LOCAL_DEVELOPMENT.md).
+To build and pack an unpublished checkout, run these commands from the TraceDock repository root:
+
+```bash
+pnpm --filter @tracedock/playwright build
+pnpm --filter @tracedock/playwright test
+mkdir -p /absolute/path/to/playwright-project/scripts/vendor
+npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
+cd /absolute/path/to/playwright-project
+npm install --save-dev ./scripts/vendor/tracedock-playwright-0.5.1.tgz
+```
+
+`npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
+archived. Install the exact filename printed by `npm pack`; it changes when the package version
+changes. For lockfile-only installation, rebuilds, Windows commands, and troubleshooting malformed
+shell continuations, follow [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
 
 ## Configure
 
@@ -141,7 +160,7 @@ export TRACEDOCK_RUN_NAME='checkout-e2e' # becomes checkout-e2e-20260924T1042314
 npx playwright test
 ```
 
-A complete copyable template is included as [`tracedock.env.example`](./tracedock.env.example):
+A complete copyable template is included as [`tracedock.env.example`](tracedock.env.example):
 
 ```bash
 cp node_modules/@tracedock/playwright/tracedock.env.example .env.tracedock.local
@@ -159,10 +178,20 @@ variables, the paired Playwright reporter configuration, and a link back to this
 warning-only so a developer who intentionally runs without TraceDock still gets the original
 Playwright exit code.
 
-For a non-breaking upgrade, every `TRACEDOCK_*` setting also accepts its former
-`TESTCENTER_*` name. New names take precedence when both are present. The old
-`withTestCenterDefaults` helper and `TestCenter*` TypeScript types remain deprecated aliases; new
-configuration should use the TraceDock names shown here.
+Only the documented `TRACEDOCK_*` environment variables and TraceDock TypeScript exports are
+supported.
+
+Reporter options take precedence over their environment fallbacks. In particular, a `url` in
+`playwright.config.ts` overrides `TRACEDOCK_URL`. At startup the reporter prints the selected
+publishing target and portable-bundle policy. If both URLs are present and differ, it warns with
+the selected and ignored destinations before capability negotiation; it also warns when a loopback
+destination is selected, because `localhost` inside CI refers to the build agent.
+
+If capability negotiation fails, the reporter does not send details under an unknown server
+policy. It switches to offline full-detail capture instead, retaining steps and evidence for the
+portable ZIP. At the end it warns that publication did not complete and prints the absolute ZIP
+path. If bundle creation is disabled or fails, the final warning states that explicitly and shows
+the configured output directory when available.
 
 The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
 If `@tracedock/playwright` is absent from the reporter list, Playwright never loads it and no
@@ -170,29 +199,111 @@ package code can print a configuration message.
 
 ## Options
 
-| Option              | Environment fallback                         | Purpose                                                                                                             |
-| ------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `junitFile`         | —                                            | Required path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
-| `project`           | `TRACEDOCK_PROJECT`                         | TraceDock project key                                                                                             |
-| `url`               | `TRACEDOCK_URL`                             | TraceDock origin                                                                                                  |
-| `organization`      | `TRACEDOCK_ORG`                             | Organization slug used to print the run URL                                                                         |
-| `name`              | `TRACEDOCK_RUN_NAME`                        | Base run name                                                                                                       |
-| `namePattern`       | `TRACEDOCK_RUN_NAME_PATTERN`                | Run-name pattern supporting `{name}` and `{timestamp}`; default `{name}-{timestamp}`                                |
-| `environment`       | `TRACEDOCK_ENVIRONMENT`                     | Target environment                                                                                                  |
-| `branch`            | `TRACEDOCK_BRANCH`, then CI metadata        | Source branch                                                                                                       |
-| `commitSha`         | `TRACEDOCK_COMMIT_SHA`, then CI metadata    | Source revision                                                                                                     |
-| `pullRequest`       | `TRACEDOCK_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                                 |
-| `ci`                | `TRACEDOCK_CI_*`, then detected CI metadata | Build, job and pipeline context                                                                                     |
-| `tags`              | —                                            | Run tags                                                                                                            |
-| `priority.fromTags` | `TRACEDOCK_PRIORITY_FROM_TAGS`              | Synchronize exact `@p0`–`@p3` Playwright tags; enabled by default                                                   |
-| `uploadConcurrency` | —                                            | Concurrent evidence uploads, from 1 to 16; default 3                                                                |
-| `capabilityTimeoutMs` | —                                          | Capability lookup timeout, clamped to 500–30,000 ms; default 5,000                                                  |
-| `bundle.mode`       | `TRACEDOCK_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
-| `bundle.outputDir`  | `TRACEDOCK_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `tracedock-bundles` beside the configured JUnit file                                 |
+This example shows every reporter option. Supply only the fields your project needs:
+
+```ts
+[
+  "@tracedock/playwright",
+  {
+    // Required and shared with Playwright's built-in JUnit reporter.
+    junitFile: "test-results/reports/junit-result.xml",
+
+    // TraceDock destination. The token is deliberately not a reporter option.
+    url: "https://tracedock.example.com",
+    project: "checkout-web",
+    organization: "acme",
+
+    // Run metadata.
+    name: "Checkout regression",
+    namePattern: "{name}-{timestamp}",
+    environment: "staging",
+    branch: "main",
+    commitSha: "abc123",
+    pullRequest: 42,
+    tags: {
+      suite: "regression",
+      team: "checkout",
+    },
+
+    // Explicit values override TRACEDOCK_CI_* and detected CI metadata.
+    ci: {
+      provider: "azure",
+      buildId: "9001",
+      buildNumber: "84",
+      jobName: "playwright-chromium",
+      jobUrl: "https://ci.example/jobs/9001",
+      pipelineName: "Nightly regression",
+      pipelineUrl: "https://ci.example/pipelines/9001",
+      actor: "release-bot",
+      triggerEvent: "schedule",
+    },
+
+    priority: { fromTags: true },
+    uploadConcurrency: 3,
+    capabilityTimeoutMs: 5_000,
+    bundle: {
+      mode: "always",
+      outputDir: "test-results/reports/tracedock-bundles",
+    },
+  },
+]
+```
+
+| Option                | Accepted value                                     | Environment fallback                        | Purpose                                                                                                    |
+| --------------------- | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `junitFile`           | File path; required                                | —                                           | Path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
+| `project`             | Project key                                        | `TRACEDOCK_PROJECT`                         | TraceDock destination project                                                                              |
+| `url`                 | HTTP or HTTPS URL                                  | `TRACEDOCK_URL`                             | TraceDock origin                                                                                           |
+| `organization`        | Organization slug                                  | `TRACEDOCK_ORG`                             | Enables the final browser run URL                                                                          |
+| `name`                | String                                             | `TRACEDOCK_RUN_NAME`                        | Base run name                                                                                              |
+| `namePattern`         | String containing `{name}` and/or `{timestamp}`    | `TRACEDOCK_RUN_NAME_PATTERN`                | Run-name format; default `{name}-{timestamp}`                                                              |
+| `environment`         | String                                             | `TRACEDOCK_ENVIRONMENT`                     | Target environment                                                                                         |
+| `branch`              | String                                             | `TRACEDOCK_BRANCH`, then CI metadata        | Source branch                                                                                              |
+| `commitSha`           | String                                             | `TRACEDOCK_COMMIT_SHA`, then CI metadata    | Source revision                                                                                            |
+| `pullRequest`         | Positive integer                                   | `TRACEDOCK_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                        |
+| `ci`                  | CI metadata object                                 | `TRACEDOCK_CI_*`, then detected CI metadata | Build, job, pipeline, actor and trigger context                                                            |
+| `tags`                | `Record<string, string>`                           | `TRACEDOCK_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                    |
+| `priority.fromTags`   | Boolean; default `true`                            | `TRACEDOCK_PRIORITY_FROM_TAGS`              | Synchronizes exact `@p0`–`@p3` Playwright tags                                                             |
+| `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                           | Maximum simultaneous evidence uploads                                                                     |
+| `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                           | Project capability lookup timeout                                                                          |
+| `bundle.mode`         | `always`, `on-failure`, or `off`; default `always` | `TRACEDOCK_BUNDLE_MODE`                     | Portable ZIP retention policy                                                                              |
+| `bundle.outputDir`    | Directory path                                     | `TRACEDOCK_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `tracedock-bundles` beside `junitFile`                                        |
+
+The `ci` object accepts `provider`, `buildId`, `buildNumber`, `jobName`, `jobUrl`, `pipelineName`,
+`pipelineUrl`, `actor`, and `triggerEvent`. Valid providers are `github`, `gitlab`, `jenkins`,
+`circleci`, `buildkite`, `azure`, `bitbucket`, `teamcity`, `local`, and `unknown`.
+
+`token` is intentionally not an accepted reporter option. Provide the required secret as
+`TRACEDOCK_TOKEN` in the process environment or CI secret store so it cannot be committed in
+`playwright.config.ts`.
 
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, CircleCI, Buildkite, Bitbucket Pipelines and
 TeamCity metadata is detected without a vendor SDK. In GitHub Actions, the run link is appended to
 the step summary when `GITHUB_STEP_SUMMARY` is available.
+
+### Run tags
+
+Set run tags from CI with a comma-separated `key=value` (or `key:value`) list:
+
+```bash
+export TRACEDOCK_RUN_TAGS='suite=regression,team=checkout,release=train-84'
+```
+
+Use a JSON object when a value contains a comma or colon:
+
+```bash
+export TRACEDOCK_RUN_TAGS='{"suite":"smoke,critical","target":"https://checkout.example.com"}'
+```
+
+The reporter merges these with its `tags` option. Reporter-option values win on matching keys.
+TraceDock then adds the reserved `playwright-version` and `test-count` run tags; configuration
+cannot replace those values. Tags are included in Full details, Summary-only publications, and
+portable bundles. A malformed environment entry is skipped with a warning rather than failing the
+Playwright run.
+
+Run tags are separate from Playwright testcase tags. The reporter intentionally consumes only its
+reserved exact `@p0`–`@p3` testcase tags as priority declarations; it does not promote arbitrary
+tags such as `@smoke` to the run.
 
 The timestamp is UTC with millisecond precision, so a base name such as `checkout-e2e` becomes
 `checkout-e2e-20260924T104231456Z`. Set `namePattern: '{name}'` only when an external build number
@@ -325,11 +436,10 @@ Center validates it in the background and restores the same results, priorities,
 and evidence as the live reporter. Re-importing the same bundle repairs or returns the original run instead of
 appending duplicate evidence.
 
-Bundles created by reporter `0.1.x` remain importable. They use `testcenter-bundle.json` and do not
-contain a declared testcase count, so the importer cannot apply the new count check to them.
-Both legacy and current inline manifests are bounded at 64 MiB and 10,000 evidence files. Current
-reporters write compact manifest JSON; archive-size subscription allowances remain a separate
-server-side admission check.
+Bundles created by reporter `0.1.x` remain importable. They do not contain a declared testcase
+count, so the importer cannot apply the new count check to them. Both legacy and current inline
+manifests are bounded at 64 MiB and 10,000 evidence files. Current reporters write compact manifest
+JSON; archive-size subscription allowances remain a separate server-side admission check.
 
 ## Sharding
 

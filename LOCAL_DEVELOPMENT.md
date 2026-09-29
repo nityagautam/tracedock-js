@@ -4,6 +4,38 @@ Use this workflow to build `@tracedock/playwright`, create an npm-compatible tar
 that tarball into any local Playwright project. It exercises the same package contents a registry
 installation receives without publishing a version.
 
+## Quick start: build, pack, install
+
+From the TraceDock repository root, build and test the reporter, then pack it directly into the
+Playwright project's vendor directory:
+
+```bash
+pnpm --filter @tracedock/playwright build
+pnpm --filter @tracedock/playwright test
+mkdir -p /absolute/path/to/playwright-project/scripts/vendor
+npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
+```
+
+The final line printed by npm is the archive filename. For the current package version it is
+`tracedock-playwright-0.5.1.tgz`.
+
+From the Playwright project root, install that exact file:
+
+```bash
+npm install --save-dev ./scripts/vendor/tracedock-playwright-0.5.1.tgz
+```
+
+If a workflow intentionally updates only `package.json` and `package-lock.json`, use:
+
+```bash
+npm install --save-dev --package-lock-only --ignore-scripts \
+  @tracedock/playwright@file:scripts/vendor/tracedock-playwright-0.5.1.tgz
+```
+
+`--package-lock-only` does not install anything into `node_modules`; omit it for a usable local
+installation. The version in the install command must exactly match the `.tgz` filename emitted by
+`npm pack`. For example, a command naming `0.5.0` cannot install the current `0.5.1` archive.
+
 Prerequisites:
 
 - Node.js 20 or newer.
@@ -12,12 +44,13 @@ Prerequisites:
 
 ## macOS and Linux (zsh/bash)
 
-Set the two project paths. The tarball may remain in the operating system's temporary directory.
+Set the repository, target project and tarball destination paths. `npm pack` requires the
+destination directory to exist.
 
 ```bash
 TRACEDOCK_REPO="/absolute/path/to/TraceDock"
 PLAYWRIGHT_PROJECT="/absolute/path/to/playwright-project"
-REPORTER_TARBALL="${TMPDIR:-/tmp}/tracedock-playwright-local.tgz"
+PACK_DESTINATION="/absolute/path/to/playwright-project/scripts/vendor"
 ```
 
 Install the TraceDock workspace dependencies, then build and test the reporter:
@@ -30,12 +63,27 @@ pnpm --filter @tracedock/playwright build
 pnpm --filter @tracedock/playwright test
 ```
 
-Pack the reporter and optionally inspect the archive:
+Create the destination and pack from the TraceDock repository root. The package's `prepack` script
+rebuilds `dist` as a final stale-output guard, even if the explicit build above was skipped.
 
 ```bash
-pnpm --filter @tracedock/playwright pack --out "$REPORTER_TARBALL"
+mkdir -p "$PACK_DESTINATION"
+REPORTER_TARBALL="$PACK_DESTINATION/$(npm pack ./src/packages/playwright-reporter-plugin --pack-destination "$PACK_DESTINATION" | tail -n 1)"
 tar -tzf "$REPORTER_TARBALL"
 ```
+
+The pack command may also be written across two lines, but the backslash must be the final
+character on its line—no trailing spaces:
+
+```bash
+npm pack ./src/packages/playwright-reporter-plugin \
+  --pack-destination "$PACK_DESTINATION"
+```
+
+If zsh reports `command not found: --pack-destination`, the continuation was malformed and the
+option started a second shell command. An additional `undefined-0.1.0.tgz` indicates that npm also
+interpreted the escaped whitespace as another package argument. Use the single-line command above
+or remove every character after the backslash.
 
 Install it in the Playwright project. Run exactly one install command, matching that project's
 package manager:
@@ -57,13 +105,12 @@ npx playwright test --list
 
 ## Windows (PowerShell)
 
-Set the two project paths. `Join-Path` keeps the temporary tarball path valid regardless of the
-Windows user profile location.
+Set the repository, target project and tarball destination paths.
 
 ```powershell
 $TraceDockRepo = "C:\path\to\TraceDock"
 $PlaywrightProject = "C:\path\to\playwright-project"
-$ReporterTarball = Join-Path $env:TEMP "tracedock-playwright-local.tgz"
+$PackDestination = "C:\path\to\playwright-project\scripts\vendor"
 ```
 
 Install the TraceDock workspace dependencies, then build and test the reporter:
@@ -76,11 +123,14 @@ pnpm --filter '@tracedock/playwright' build
 pnpm --filter '@tracedock/playwright' test
 ```
 
-Pack the reporter and optionally inspect the archive with the `tar` included in current Windows
-installations:
+Create the destination, pack from the TraceDock repository root, and optionally inspect the archive
+with the `tar` included in current Windows installations. The `prepack` script rebuilds `dist` as a
+final stale-output guard.
 
 ```powershell
-pnpm --filter '@tracedock/playwright' pack --out $ReporterTarball
+New-Item -ItemType Directory -Force -Path $PackDestination | Out-Null
+$TarballName = npm pack .\src\packages\playwright-reporter-plugin --pack-destination $PackDestination | Select-Object -Last 1
+$ReporterTarball = Join-Path $PackDestination $TarballName
 tar -tzf $ReporterTarball
 ```
 
@@ -113,7 +163,7 @@ macOS/Linux:
 cd "$TRACEDOCK_REPO"
 pnpm --filter @tracedock/playwright build
 pnpm --filter @tracedock/playwright test
-pnpm --filter @tracedock/playwright pack --out "$REPORTER_TARBALL"
+REPORTER_TARBALL="$PACK_DESTINATION/$(npm pack ./src/packages/playwright-reporter-plugin --pack-destination "$PACK_DESTINATION" | tail -n 1)"
 
 cd "$PLAYWRIGHT_PROJECT"
 npm install --save-dev --force "$REPORTER_TARBALL"
@@ -127,7 +177,8 @@ Windows PowerShell:
 Set-Location $TraceDockRepo
 pnpm --filter '@tracedock/playwright' build
 pnpm --filter '@tracedock/playwright' test
-pnpm --filter '@tracedock/playwright' pack --out $ReporterTarball
+$TarballName = npm pack .\src\packages\playwright-reporter-plugin --pack-destination $PackDestination | Select-Object -Last 1
+$ReporterTarball = Join-Path $PackDestination $TarballName
 
 Set-Location $PlaywrightProject
 npm install --save-dev --force $ReporterTarball

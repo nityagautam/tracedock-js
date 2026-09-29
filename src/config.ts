@@ -39,10 +39,3 @@ export function withTraceDockDefaults<const TConfig extends object>(
     },
   } as TraceDockConfig<TConfig>;
 }
-
-/** @deprecated Use `withTraceDockDefaults`. */
-export const withTestCenterDefaults = withTraceDockDefaults;
-
-/** @deprecated Use `TraceDockEvidenceDefaults`. */
-export type TestCenterEvidenceDefaults<TUse extends object = object> =
-  TraceDockEvidenceDefaults<TUse>;

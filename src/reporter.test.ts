@@ -36,6 +36,7 @@ describe("TraceDockReporter", () => {
   });
 
   it("publishes JUnit and per-attempt evidence without forwarding API auth to storage", async () => {
+    process.env.TRACEDOCK_RUN_TAGS = "suite=regression,team=payments,owner=environment";
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = String(input);
@@ -118,6 +119,7 @@ describe("TraceDockReporter", () => {
         jobName: "playwright-chromium",
         jobUrl: "https://ci.example/jobs/12001",
       },
+      tags: { owner: "configuration" },
     });
     reporter.onBegin(
       config(
@@ -153,6 +155,13 @@ describe("TraceDockReporter", () => {
       pipelineName: "Nightly regression",
       jobName: "playwright-chromium",
       jobUrl: "https://ci.example/jobs/12001",
+    });
+    expect(createBody.tags).toEqual({
+      suite: "regression",
+      team: "payments",
+      owner: "configuration",
+      "playwright-version": "1.62.1",
+      "test-count": "2",
     });
 
     const declaration = calls.find(({ url }) => url.endsWith("/attachment-upload-urls"));
@@ -204,18 +213,18 @@ describe("TraceDockReporter", () => {
     const archive = await readFile(join(bundleDirectory, bundles[0]!));
     const storedText = archive.toString("utf8");
     expect(storedText).toContain("manifest.json");
-    expect(storedText).not.toContain("testcenter-bundle.json");
     expect(storedText).toContain('"schemaVersion":2');
     expect(storedText).toContain('"testCaseCount":2');
     expect(storedText).not.toContain('"schemaVersion": 2');
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("0.4.0");
+    expect(packageJson.version).toBe("0.5.1");
     expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
     expect(storedText).toContain('"priority":"P0"');
+    expect(storedText).toContain('"suite":"regression"');
     expect(storedText).toContain("zip body");
   });
 
@@ -223,7 +232,7 @@ describe("TraceDockReporter", () => {
     delete process.env.TRACEDOCK_TOKEN;
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     const reporter = new TraceDockReporter({
@@ -244,6 +253,56 @@ describe("TraceDockReporter", () => {
     const bundles = await readdir(join(directory, "portable-output"));
     expect(bundles).toHaveLength(1);
     expect(bundles[0]).toMatch(/\.tracedock-run\.zip$/);
+    const warnings = stderr.mock.calls.flat().join("");
+    expect(warnings).toContain("TraceDock results were not published");
+    expect(warnings).toContain(
+      `Portable run bundle retained at: ${join(directory, "portable-output", bundles[0]!)}`,
+    );
+  });
+
+  it("retains full offline details when a configured URL overrides Azure and capability negotiation fails", async () => {
+    process.env.CI = "true";
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed at https://localhost:3000?token=secret");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const reporter = new TraceDockReporter({
+      junitFile: "reports/junit.xml",
+      url: "https://localhost:3000",
+      bundle: { outputDir: "fallback-bundles" },
+    });
+    reporter.onBegin(config(directory), { allTests: () => [testCase()] });
+    reporter.onTestEnd(testCase(), result());
+    await mkdir(join(directory, "reports"), { recursive: true });
+    await writeFile(
+      join(directory, "reports", "junit.xml"),
+      '<testsuites><testsuite><testcase name="offline"/></testsuite></testsuites>',
+    );
+    await reporter.onExit();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://localhost:3000/api/v1/projects/checkout-web/publish-capabilities",
+      expect.objectContaining({ method: "GET" }),
+    );
+    const warnings = stderr.mock.calls.flat().join("");
+    expect(warnings).toContain("Conflicting TraceDock URLs were detected at startup");
+    expect(warnings).toContain("Selected playwright.config.ts url: https://localhost:3000");
+    expect(warnings).toContain("Ignored TRACEDOCK_URL: https://tracedock.example");
+    expect(warnings).toContain("Inside CI, loopback points to the build agent");
+    expect(warnings).toContain("Could not resolve the project publishing mode");
+    expect(warnings).toContain("TraceDock results were not published");
+    expect(warnings).toContain("Portable run bundle retained at:");
+    expect(warnings).not.toContain("secret");
+
+    const bundleDirectory = join(directory, "fallback-bundles");
+    const bundles = await readdir(bundleDirectory);
+    expect(bundles).toHaveLength(1);
+    const archive = await readFile(join(bundleDirectory, bundles[0]!));
+    expect(archive.toString("utf8")).toContain("Given a saved card");
+    expect(stdout.mock.calls.flat().join("")).toContain(`output directory: ${bundleDirectory}`);
   });
 
   it("publishes only aggregate counts when the project is Summary-only", async () => {
@@ -339,35 +398,6 @@ describe("TraceDockReporter", () => {
     expect(output).toContain("withTraceDockDefaults");
     expect(output).toContain("['@tracedock/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
-  });
-
-  it("accepts legacy Test Center connection variables during migration", () => {
-    delete process.env.TRACEDOCK_URL;
-    delete process.env.TRACEDOCK_TOKEN;
-    delete process.env.TRACEDOCK_PROJECT;
-    delete process.env.TRACEDOCK_ORG;
-    process.env.TESTCENTER_URL = "https://legacy.example";
-    process.env.TESTCENTER_TOKEN = "legacy-secret";
-    process.env.TESTCENTER_PROJECT = "legacy-project";
-    process.env.TESTCENTER_ORG = "legacy-org";
-    const fetchMock = vi.fn(
-      async () =>
-        new Promise<Response>(() => {
-          // Only the synchronously selected endpoint and credentials are under test.
-        }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-
-    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
-    reporter.onBegin(config(directory), { allTests: () => [] });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://legacy.example/api/v1/projects/legacy-project/publish-capabilities",
-      expect.objectContaining({
-        headers: expect.objectContaining({ authorization: "Bearer legacy-secret" }),
-      }),
-    );
   });
 
   it("reports missing run and CI context without blocking publication", () => {

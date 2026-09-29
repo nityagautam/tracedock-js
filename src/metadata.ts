@@ -258,7 +258,7 @@ function first(...values: Array<string | undefined>): string | undefined {
 }
 
 function brandEnv(env: Environment, name: string): string | undefined {
-  return first(env[`TRACEDOCK_${name}`], env[`TESTCENTER_${name}`]);
+  return first(env[`TRACEDOCK_${name}`]);
 }
 
 function positiveInteger(value: string | undefined): number | undefined {
