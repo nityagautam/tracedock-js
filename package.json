@@ -1,17 +1,17 @@
 {
-  "name": "@tracedock/playwright",
-  "version": "0.5.1",
-  "description": "Playwright reporter for publishing JUnit results and test evidence to TraceDock",
-  "homepage": "https://github.com/nityagautam/TraceDock#readme",
+  "name": "@traceoptix/playwright",
+  "version": "1.0.0",
+  "description": "Playwright reporter for publishing Playwright test results and test evidence to TraceOptix",
+  "homepage": "https://github.com/nityagautam/traceoptix-playwright#readme",
   "bugs": {
-    "url": "https://github.com/nityagautam/TraceDock/issues"
+    "url": "https://github.com/nityagautam/traceoptix-playwright/issues"
   },
   "keywords": [
     "playwright",
     "reporter",
     "junit",
     "test-results",
-    "tracedock"
+    "traceoptix"
   ],
   "type": "module",
   "sideEffects": false,
@@ -28,7 +28,7 @@
     "dist",
     "README.md",
     "LOCAL_DEVELOPMENT.md",
-    "tracedock.env.example"
+    "traceoptix.env.example"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -56,5 +56,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "packageManager": "pnpm@11.18.0+sha512.33d83c77da82f49fba836925c6f1b841181ec3132b670639bd012f7075f5c7cf634c5f870147c19aae7478fac01df09d8892e880454896edd23ee9b33757563c"
+  "packageManager": "pnpm@11.18.0+sha512.33d83c77da82f49fba836925c6f1b841181ec3132b670639bd012f7075f5c7cf634c5f870147c19aae7478fac01df09d8892e880454896edd23ee9b33757563c",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nityagautam/traceoptix-playwright.git"
+  }
 }

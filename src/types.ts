@@ -1,6 +1,6 @@
 import type { Buffer } from "node:buffer";
 
-export type TraceDockCiProvider =
+export type TraceOptixCiProvider =
   | "github"
   | "gitlab"
   | "jenkins"
@@ -12,8 +12,8 @@ export type TraceDockCiProvider =
   | "local"
   | "unknown";
 
-export interface TraceDockCiOptions {
-  provider?: TraceDockCiProvider;
+export interface TraceOptixCiOptions {
+  provider?: TraceOptixCiProvider;
   buildId?: string;
   buildNumber?: string;
   jobName?: string;
@@ -25,16 +25,16 @@ export interface TraceDockCiOptions {
 }
 
 /** Options are safe to commit. The API token is intentionally environment-only. */
-export interface TraceDockReporterOptions {
-  /** TraceDock project key. Falls back to TRACEDOCK_PROJECT. */
+export interface TraceOptixReporterOptions {
+  /** TraceOptix project key. Falls back to TRACEOPTIX_PROJECT. */
   project?: string;
   /** JUnit file written by Playwright's built-in junit reporter. */
   junitFile: string;
-  /** TraceDock origin. Overrides TRACEDOCK_URL; differing values produce a startup warning. */
+  /** TraceOptix origin. Overrides TRACEOPTIX_URL; differing values produce a startup warning. */
   url?: string;
   /** Optional organization slug used only to print the final browser URL. */
   organization?: string;
-  /** Base run name. Falls back to TRACEDOCK_RUN_NAME, then the detected CI build. */
+  /** Base run name. Falls back to TRACEOPTIX_RUN_NAME, then the detected CI build. */
   name?: string;
   /** Supports {name} and {timestamp}. Defaults to "{name}-{timestamp}". */
   namePattern?: string;
@@ -42,9 +42,9 @@ export interface TraceDockReporterOptions {
   branch?: string;
   commitSha?: string;
   pullRequest?: number;
-  /** Explicit CI fields override TRACEDOCK_CI_* and provider-detected values. */
-  ci?: TraceDockCiOptions;
-  /** Run tags. Values override matching TRACEDOCK_RUN_TAGS entries. */
+  /** Explicit CI fields override TRACEOPTIX_CI_* and provider-detected values. */
+  ci?: TraceOptixCiOptions;
+  /** Run tags. Values override matching TRACEOPTIX_RUN_TAGS entries. */
   tags?: Record<string, string>;
   /** Detect @p0–@p3 Playwright tags and synchronize testcase priority. Defaults to true. */
   priority?: { fromTags?: boolean };
@@ -52,7 +52,7 @@ export interface TraceDockReporterOptions {
   uploadConcurrency?: number;
   /** Project capability lookup timeout in milliseconds. Defaults to 5,000. */
   capabilityTimeoutMs?: number;
-  /** Portable ZIP output. Defaults to always, beside junitFile in tracedock-bundles/. */
+  /** Portable ZIP output. Defaults to always, beside junitFile in traceoptix-bundles/. */
   bundle?: {
     mode?: "always" | "on-failure" | "off";
     outputDir?: string;

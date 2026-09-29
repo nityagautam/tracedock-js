@@ -51,7 +51,7 @@ export interface CreateSummaryRunResponse {
   dataMode: "summary_only";
 }
 
-export class TraceDockClient {
+export class TraceOptixClient {
   private readonly baseUrl: string;
 
   constructor(
@@ -77,10 +77,10 @@ export class TraceDockClient {
       { method: "GET", signal: AbortSignal.timeout(timeoutMs) },
     );
     if (!isPublishCapabilitiesResponse(response)) {
-      throw new Error("TraceDock returned an unsupported publish-capability response");
+      throw new Error("TraceOptix returned an unsupported publish-capability response");
     }
     if (Date.parse(response.expiresAt) <= Date.now()) {
-      throw new Error("TraceDock returned an expired publish-capability response");
+      throw new Error("TraceOptix returned an expired publish-capability response");
     }
     return response;
   }
@@ -179,7 +179,7 @@ export class TraceDockClient {
     });
 
     if (!response.ok) {
-      let message = `TraceDock API returned HTTP ${response.status}`;
+      let message = `TraceOptix API returned HTTP ${response.status}`;
       try {
         const body = (await response.json()) as { error?: { message?: string }; message?: string };
         message = body.error?.message ?? body.message ?? message;

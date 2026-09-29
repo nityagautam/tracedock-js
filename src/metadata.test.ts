@@ -61,9 +61,9 @@ describe("CI metadata detection", () => {
       resolveCiContext(
         { jobName: "Configured browser tests" },
         {
-          TRACEDOCK_CI_BUILD_NUMBER: "84",
-          TRACEDOCK_CI_BUILD_NAME: "Nightly regression",
-          TRACEDOCK_CI_JOB_URL: "https://ci.example/jobs/84",
+          TRACEOPTIX_CI_BUILD_NUMBER: "84",
+          TRACEOPTIX_CI_BUILD_NAME: "Nightly regression",
+          TRACEOPTIX_CI_JOB_URL: "https://ci.example/jobs/84",
         },
         {
           provider: "github",

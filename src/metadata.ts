@@ -1,7 +1,7 @@
-import type { TraceDockCiOptions, TraceDockCiProvider } from "./types.js";
+import type { TraceOptixCiOptions, TraceOptixCiProvider } from "./types.js";
 
-export interface CiContext extends TraceDockCiOptions {
-  provider: TraceDockCiProvider;
+export interface CiContext extends TraceOptixCiOptions {
+  provider: TraceOptixCiProvider;
 }
 
 export interface DetectedMetadata {
@@ -13,7 +13,7 @@ export interface DetectedMetadata {
 
 type Environment = NodeJS.ProcessEnv;
 
-const CI_PROVIDERS = new Set<TraceDockCiProvider>([
+const CI_PROVIDERS = new Set<TraceOptixCiProvider>([
   "github",
   "gitlab",
   "jenkins",
@@ -46,15 +46,15 @@ export function detectMetadata(env: Environment): DetectedMetadata {
 
 /**
  * CI systems with native variables need no configuration, while custom runners can supply the
- * same fields through stable TraceDock names. Merge per field so adding one override (usually a
+ * same fields through stable TraceOptix names. Merge per field so adding one override (usually a
  * friendlier job name) does not discard the URLs and build identifiers detected from the provider.
  */
 export function resolveCiContext(
-  configured: TraceDockCiOptions | undefined,
+  configured: TraceOptixCiOptions | undefined,
   env: Environment,
   detected: CiContext | undefined,
-): TraceDockCiOptions | undefined {
-  const resolved = removeUndefined<TraceDockCiOptions>({
+): TraceOptixCiOptions | undefined {
+  const resolved = removeUndefined<TraceOptixCiOptions>({
     provider:
       configured?.provider ?? ciProvider(brandEnv(env, "CI_PROVIDER")) ?? detected?.provider,
     buildId: first(configured?.buildId, brandEnv(env, "CI_BUILD_ID"), detected?.buildId),
@@ -258,7 +258,7 @@ function first(...values: Array<string | undefined>): string | undefined {
 }
 
 function brandEnv(env: Environment, name: string): string | undefined {
-  return first(env[`TRACEDOCK_${name}`]);
+  return first(env[`TRACEOPTIX_${name}`]);
 }
 
 function positiveInteger(value: string | undefined): number | undefined {
@@ -267,8 +267,8 @@ function positiveInteger(value: string | undefined): number | undefined {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function ciProvider(value: string | undefined): TraceDockCiProvider | undefined {
-  const normalized = value?.trim().toLowerCase() as TraceDockCiProvider | undefined;
+function ciProvider(value: string | undefined): TraceOptixCiProvider | undefined {
+  const normalized = value?.trim().toLowerCase() as TraceOptixCiProvider | undefined;
   return normalized && CI_PROVIDERS.has(normalized) ? normalized : undefined;
 }
 
