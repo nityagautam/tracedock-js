@@ -1,14 +1,14 @@
-# `@testcenter/playwright`
+# `@tracedock/playwright`
 
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
-files and logs to Test Center. Evidence is linked to the testcase, retry and originating step that
-produced it. Publishing is warning-only: a Test Center or object-storage outage never changes
+files and logs to TraceDock. Evidence is linked to the testcase, retry and originating step that
+produced it. Publishing is warning-only: a TraceDock or object-storage outage never changes
 Playwright's exit code.
 
 ## Install
 
 ```bash
-npm install --save-dev @testcenter/playwright
+npm install --save-dev @tracedock/playwright
 ```
 
 To build and install an unpublished local tarball on macOS, Linux, or Windows, follow
@@ -20,22 +20,22 @@ Keep Playwright's built-in JUnit reporter and give both reporters the same file:
 
 ### Option A: apply the evidence defaults
 
-Use `withTestCenterDefaults` when you want the integration to retain Playwright traces and videos
+Use `withTraceDockDefaults` when you want the integration to retain Playwright traces and videos
 for failed tests without repeating those policies in your configuration:
 
 ```ts
 import { defineConfig } from "@playwright/test";
-import { withTestCenterDefaults } from "@testcenter/playwright";
+import { withTraceDockDefaults } from "@tracedock/playwright";
 
 const junitFile = "test-results/junit.xml";
 
 export default defineConfig(
-  withTestCenterDefaults({
+  withTraceDockDefaults({
     reporter: [
       ["line"],
       ["junit", { outputFile: junitFile, includeRetries: true }],
       [
-        "@testcenter/playwright",
+        "@tracedock/playwright",
         {
           junitFile,
           project: "checkout-web",
@@ -44,8 +44,8 @@ export default defineConfig(
           namePattern: "{name}-{timestamp}",
           // Optional; @p0 through @p3 are synchronized by default.
           priority: { fromTags: true },
-          // Optional. Defaults to test-results/testcenter-bundles beside junit.xml.
-          bundle: { outputDir: "test-results/testcenter-bundles" },
+          // Optional. Defaults to test-results/tracedock-bundles beside junit.xml.
+          bundle: { outputDir: "test-results/tracedock-bundles" },
         },
       ],
     ],
@@ -68,7 +68,7 @@ evidence for failed tests, which can add some execution time and artifact storag
 ### Option B: keep an existing configuration unchanged
 
 The helper is optional. If a project already has its complete Playwright configuration and evidence
-policy, add only the JUnit and Test Center reporter entries:
+policy, add only the JUnit and TraceDock reporter entries:
 
 ```ts
 import { defineConfig } from "@playwright/test";
@@ -80,7 +80,7 @@ export default defineConfig({
     ["line"],
     ["junit", { outputFile: junitFile, includeRetries: true }],
     [
-      "@testcenter/playwright",
+      "@tracedock/playwright",
       {
         junitFile,
         project: "checkout-web",
@@ -106,13 +106,13 @@ means there is no trace to upload. Whether defaults are written manually or appl
 they must be resolved while Playwright builds its configuration—the reporter callback itself is too
 late to change what Playwright records.
 
-The Test Center reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
+The TraceDock reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
-JUnit reporter; Test Center receives the final version.
+JUnit reporter; TraceDock receives the final version.
 
 ### Server-selected Summary-only mode
 
-At the start of each execution, the reporter asks Test Center for the configured project's
+At the start of each execution, the reporter asks TraceDock for the configured project's
 publish mode. In **Full details**, the JUnit, priorities, steps and evidence flow is unchanged.
 In **Summary-only**, it sends one content-free aggregate containing run/CI metadata and final
 passed, failed, skipped, errored, blocked and flaky counts. It does not create an upload, send JUnit,
@@ -125,42 +125,47 @@ summary-run unit and no detailed-result units. Test names, failure diagnosis, te
 flake analysis and testcase-level gates are unavailable for that run.
 
 If capability negotiation times out, is rejected, or comes from an incompatible older server, the
-reporter warns and publishes nothing to Test Center. It never guesses Full details, because that
+reporter warns and publishes nothing to TraceDock. It never guesses Full details, because that
 could send data the administrator chose not to retain. Playwright's own result and exit code remain
 unchanged.
 
 Set credentials in the environment, never in `playwright.config.ts`:
 
 ```bash
-export TESTCENTER_URL='https://testcenter.example.com'
-export TESTCENTER_PROJECT='checkout-web' # optional when project is in reporter options
-export TESTCENTER_TOKEN='tc_...'
-export TESTCENTER_ORG='acme'              # optional; enables the final browser URL
-export TESTCENTER_RUN_NAME='checkout-e2e' # becomes checkout-e2e-20260924T104231456Z
+export TRACEDOCK_URL='https://tracedock.example.com'
+export TRACEDOCK_PROJECT='checkout-web' # optional when project is in reporter options
+export TRACEDOCK_TOKEN='td_...'
+export TRACEDOCK_ORG='acme'              # optional; enables the final browser URL
+export TRACEDOCK_RUN_NAME='checkout-e2e' # becomes checkout-e2e-20260924T104231456Z
 
 npx playwright test
 ```
 
-A complete copyable template is included as [`testcenter.env.example`](./testcenter.env.example):
+A complete copyable template is included as [`tracedock.env.example`](./tracedock.env.example):
 
 ```bash
-cp node_modules/@testcenter/playwright/testcenter.env.example .env.testcenter.local
-# Edit the ignored .env.testcenter.local file, then load it before Playwright starts.
+cp node_modules/@tracedock/playwright/tracedock.env.example .env.tracedock.local
+# Edit the ignored .env.tracedock.local file, then load it before Playwright starts.
 set -a
-. ./.env.testcenter.local
+. ./.env.tracedock.local
 set +a
 npx playwright test
 ```
 
-`TESTCENTER_TOKEN`, `TESTCENTER_URL`, and the project key must all resolve before publishing
+`TRACEDOCK_TOKEN`, `TRACEDOCK_URL`, and the project key must all resolve before publishing
 starts. If any value or the shared `junitFile` option is missing, the reporter makes no request
 and prints an actionable configuration block showing the missing values, the required environment
 variables, the paired Playwright reporter configuration, and a link back to this guide. This is
-warning-only so a developer who intentionally runs without Test Center still gets the original
+warning-only so a developer who intentionally runs without TraceDock still gets the original
 Playwright exit code.
 
+For a non-breaking upgrade, every `TRACEDOCK_*` setting also accepts its former
+`TESTCENTER_*` name. New names take precedence when both are present. The old
+`withTestCenterDefaults` helper and `TestCenter*` TypeScript types remain deprecated aliases; new
+configuration should use the TraceDock names shown here.
+
 The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
-If `@testcenter/playwright` is absent from the reporter list, Playwright never loads it and no
+If `@tracedock/playwright` is absent from the reporter list, Playwright never loads it and no
 package code can print a configuration message.
 
 ## Options
@@ -168,22 +173,22 @@ package code can print a configuration message.
 | Option              | Environment fallback                         | Purpose                                                                                                             |
 | ------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `junitFile`         | —                                            | Required path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
-| `project`           | `TESTCENTER_PROJECT`                         | Test Center project key                                                                                             |
-| `url`               | `TESTCENTER_URL`                             | Test Center origin                                                                                                  |
-| `organization`      | `TESTCENTER_ORG`                             | Organization slug used to print the run URL                                                                         |
-| `name`              | `TESTCENTER_RUN_NAME`                        | Base run name                                                                                                       |
-| `namePattern`       | `TESTCENTER_RUN_NAME_PATTERN`                | Run-name pattern supporting `{name}` and `{timestamp}`; default `{name}-{timestamp}`                                |
-| `environment`       | `TESTCENTER_ENVIRONMENT`                     | Target environment                                                                                                  |
-| `branch`            | `TESTCENTER_BRANCH`, then CI metadata        | Source branch                                                                                                       |
-| `commitSha`         | `TESTCENTER_COMMIT_SHA`, then CI metadata    | Source revision                                                                                                     |
-| `pullRequest`       | `TESTCENTER_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                                 |
-| `ci`                | `TESTCENTER_CI_*`, then detected CI metadata | Build, job and pipeline context                                                                                     |
+| `project`           | `TRACEDOCK_PROJECT`                         | TraceDock project key                                                                                             |
+| `url`               | `TRACEDOCK_URL`                             | TraceDock origin                                                                                                  |
+| `organization`      | `TRACEDOCK_ORG`                             | Organization slug used to print the run URL                                                                         |
+| `name`              | `TRACEDOCK_RUN_NAME`                        | Base run name                                                                                                       |
+| `namePattern`       | `TRACEDOCK_RUN_NAME_PATTERN`                | Run-name pattern supporting `{name}` and `{timestamp}`; default `{name}-{timestamp}`                                |
+| `environment`       | `TRACEDOCK_ENVIRONMENT`                     | Target environment                                                                                                  |
+| `branch`            | `TRACEDOCK_BRANCH`, then CI metadata        | Source branch                                                                                                       |
+| `commitSha`         | `TRACEDOCK_COMMIT_SHA`, then CI metadata    | Source revision                                                                                                     |
+| `pullRequest`       | `TRACEDOCK_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                                 |
+| `ci`                | `TRACEDOCK_CI_*`, then detected CI metadata | Build, job and pipeline context                                                                                     |
 | `tags`              | —                                            | Run tags                                                                                                            |
-| `priority.fromTags` | `TESTCENTER_PRIORITY_FROM_TAGS`              | Synchronize exact `@p0`–`@p3` Playwright tags; enabled by default                                                   |
+| `priority.fromTags` | `TRACEDOCK_PRIORITY_FROM_TAGS`              | Synchronize exact `@p0`–`@p3` Playwright tags; enabled by default                                                   |
 | `uploadConcurrency` | —                                            | Concurrent evidence uploads, from 1 to 16; default 3                                                                |
 | `capabilityTimeoutMs` | —                                          | Capability lookup timeout, clamped to 500–30,000 ms; default 5,000                                                  |
-| `bundle.mode`       | `TESTCENTER_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
-| `bundle.outputDir`  | `TESTCENTER_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `testcenter-bundles` beside the configured JUnit file                                 |
+| `bundle.mode`       | `TRACEDOCK_BUNDLE_MODE`                     | Portable ZIP retention: `always` (default), `on-failure`, or `off`                                                  |
+| `bundle.outputDir`  | `TRACEDOCK_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `tracedock-bundles` beside the configured JUnit file                                 |
 
 GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, CircleCI, Buildkite, Bitbucket Pipelines and
 TeamCity metadata is detected without a vendor SDK. In GitHub Actions, the run link is appended to
@@ -199,7 +204,7 @@ Detected CI values can be overridden in reporter options with `ci.provider`, `ci
 
 ```ts
 [
-  "@testcenter/playwright",
+  "@tracedock/playwright",
   {
     junitFile,
     name: "checkout-e2e",
@@ -216,18 +221,18 @@ Detected CI values can be overridden in reporter options with `ci.provider`, `ci
 Custom CI systems can instead set the equivalent environment variables:
 
 ```bash
-export TESTCENTER_CI_PROVIDER='unknown'
-export TESTCENTER_CI_BUILD_ID='pipeline-9001'
-export TESTCENTER_CI_BUILD_NUMBER='84'
-export TESTCENTER_CI_PIPELINE_NAME='Nightly regression' # TESTCENTER_CI_BUILD_NAME is an alias
-export TESTCENTER_CI_PIPELINE_URL='https://ci.example/pipelines/9001'
-export TESTCENTER_CI_JOB_NAME='playwright-chromium'
-export TESTCENTER_CI_JOB_URL='https://ci.example/jobs/12001'
-export TESTCENTER_CI_ACTOR='release-bot'
-export TESTCENTER_CI_TRIGGER_EVENT='schedule'
+export TRACEDOCK_CI_PROVIDER='unknown'
+export TRACEDOCK_CI_BUILD_ID='pipeline-9001'
+export TRACEDOCK_CI_BUILD_NUMBER='84'
+export TRACEDOCK_CI_PIPELINE_NAME='Nightly regression' # TRACEDOCK_CI_BUILD_NAME is an alias
+export TRACEDOCK_CI_PIPELINE_URL='https://ci.example/pipelines/9001'
+export TRACEDOCK_CI_JOB_NAME='playwright-chromium'
+export TRACEDOCK_CI_JOB_URL='https://ci.example/jobs/12001'
+export TRACEDOCK_CI_ACTOR='release-bot'
+export TRACEDOCK_CI_TRIGGER_EVENT='schedule'
 ```
 
-Precedence is reporter option, then `TESTCENTER_CI_*`, then provider auto-detection. Overrides are
+Precedence is reporter option, then `TRACEDOCK_CI_*`, then provider auto-detection. Overrides are
 merged one field at a time, so setting a friendlier job name does not discard an automatically
 detected build URL.
 
@@ -249,13 +254,13 @@ test("card payment", { tag: "@p0" }, async ({ page }) => {
 
 The reporter declares every selected test, including tests with no priority tag. That lets a later
 run clear an older reporter-managed priority when its tag is removed. A non-null priority chosen in
-the Test Center UI is an explicit manual override and is never replaced; clearing it allows the
+the TraceDock UI is an explicit manual override and is never replaced; clearing it allows the
 next reporter run to restore the source tag. Conflicting tags such as `@p0` and `@p2` produce a
 warning; the first tag in Playwright's resolved order wins and the others are ignored.
 
 Prefer the `tag` metadata above instead of embedding `@p0` in the test title. Playwright exposes
-both, but changing a title changes Test Center's testcase identity. Use
-`priority: { fromTags: false }` or `TESTCENTER_PRIORITY_FROM_TAGS=false` to disable synchronization.
+both, but changing a title changes TraceDock's testcase identity. Use
+`priority: { fromTags: false }` or `TRACEDOCK_PRIORITY_FROM_TAGS=false` to disable synchronization.
 Ordinary JUnit uploads remain supported and do not declare priorities automatically.
 
 ## Evidence behavior
@@ -270,7 +275,7 @@ still running, and records Playwright's zero-based retry number.
 - HAR, HTML, JSON, NDJSON, text and Markdown attachments are stored with safe display types.
 - Unknown files are stored as binary evidence.
 
-An evidence failure produces a warning and is reported by Test Center as missing evidence. A JUnit
+An evidence failure produces a warning and is reported by TraceDock as missing evidence. A JUnit
 failure leaves the run pending rather than completing it with partial results.
 
 ## Test steps
@@ -287,24 +292,24 @@ continues to ingest normally and simply shows no Test steps section.
 
 ## Portable run ZIP
 
-Every execution produces one `<run-name>.testcenter-run.zip` by default. The archive contains the
+Every execution produces one `<run-name>.tracedock-run.zip` by default. The archive contains the
 finished JUnit XML, run and CI metadata, tag-derived testcase priorities, every structured step,
 retries, evidence files, and the exact testcase/attempt/step relationship for each file. Version
 `0.2.0` and later write schema-version-2 metadata as `manifest.json`, including the number of tests selected
-at `onBegin`. During import Test Center verifies that count with its canonical JUnit parser before
-promoting the run. It contains no API token, cookie, presigned URL, or Test Center credential.
+at `onBegin`. During import TraceDock verifies that count with its canonical JUnit parser before
+promoting the run. It contains no API token, cookie, presigned URL, or TraceDock credential.
 
-The default directory is `testcenter-bundles` beside `junitFile`. Choose another location in the
+The default directory is `tracedock-bundles` beside `junitFile`. Choose another location in the
 reporter configuration when CI collects artifacts from a specific directory:
 
 ```ts
 [
-  "@testcenter/playwright",
+  "@tracedock/playwright",
   {
     junitFile,
     bundle: {
       mode: "always",
-      outputDir: "artifacts/testcenter",
+      outputDir: "artifacts/tracedock",
     },
   },
 ];
@@ -313,7 +318,7 @@ reporter configuration when CI collects artifacts from a specific directory:
 `always` is the default so a portable result exists whether live publishing succeeds or not.
 `on-failure` keeps it only when run creation, step/evidence publication, JUnit upload, or completion
 is incomplete. `off` disables local staging and ZIP creation. The equivalent environment variables
-are `TESTCENTER_BUNDLE_MODE` and `TESTCENTER_BUNDLE_OUTPUT_DIR`.
+are `TRACEDOCK_BUNDLE_MODE` and `TRACEDOCK_BUNDLE_OUTPUT_DIR`.
 
 To publish later, open the target project's **Upload** page and select the ZIP by itself. Test
 Center validates it in the background and restores the same results, priorities, steps, retries
@@ -328,6 +333,6 @@ server-side admission check.
 
 ## Sharding
 
-Each Playwright process creates one Test Center run. To publish one combined run from multiple
+Each Playwright process creates one TraceDock run. To publish one combined run from multiple
 shards, use Playwright blob reports plus `npx playwright merge-reports`, then run this reporter as
 part of the merge configuration. Automatic cross-process shard merging is not part of `0.2.x`.

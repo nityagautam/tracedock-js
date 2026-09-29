@@ -1,6 +1,6 @@
 import type { Buffer } from "node:buffer";
 
-export type TestCenterCiProvider =
+export type TraceDockCiProvider =
   | "github"
   | "gitlab"
   | "jenkins"
@@ -12,8 +12,8 @@ export type TestCenterCiProvider =
   | "local"
   | "unknown";
 
-export interface TestCenterCiOptions {
-  provider?: TestCenterCiProvider;
+export interface TraceDockCiOptions {
+  provider?: TraceDockCiProvider;
   buildId?: string;
   buildNumber?: string;
   jobName?: string;
@@ -25,16 +25,16 @@ export interface TestCenterCiOptions {
 }
 
 /** Options are safe to commit. The API token is intentionally environment-only. */
-export interface TestCenterReporterOptions {
-  /** Test Center project key. Falls back to TESTCENTER_PROJECT. */
+export interface TraceDockReporterOptions {
+  /** TraceDock project key. Falls back to TRACEDOCK_PROJECT. */
   project?: string;
   /** JUnit file written by Playwright's built-in junit reporter. */
   junitFile: string;
-  /** Test Center origin. Falls back to TESTCENTER_URL. */
+  /** TraceDock origin. Falls back to TRACEDOCK_URL. */
   url?: string;
   /** Optional organization slug used only to print the final browser URL. */
   organization?: string;
-  /** Base run name. Falls back to TESTCENTER_RUN_NAME, then the detected CI build. */
+  /** Base run name. Falls back to TRACEDOCK_RUN_NAME, then the detected CI build. */
   name?: string;
   /** Supports {name} and {timestamp}. Defaults to "{name}-{timestamp}". */
   namePattern?: string;
@@ -42,8 +42,8 @@ export interface TestCenterReporterOptions {
   branch?: string;
   commitSha?: string;
   pullRequest?: number;
-  /** Explicit CI fields override TESTCENTER_CI_* and provider-detected values. */
-  ci?: TestCenterCiOptions;
+  /** Explicit CI fields override TRACEDOCK_CI_* and provider-detected values. */
+  ci?: TraceDockCiOptions;
   tags?: Record<string, string>;
   /** Detect @p0–@p3 Playwright tags and synchronize testcase priority. Defaults to true. */
   priority?: { fromTags?: boolean };
@@ -51,12 +51,19 @@ export interface TestCenterReporterOptions {
   uploadConcurrency?: number;
   /** Project capability lookup timeout in milliseconds. Defaults to 5,000. */
   capabilityTimeoutMs?: number;
-  /** Portable ZIP output. Defaults to always, beside junitFile in testcenter-bundles/. */
+  /** Portable ZIP output. Defaults to always, beside junitFile in tracedock-bundles/. */
   bundle?: {
     mode?: "always" | "on-failure" | "off";
     outputDir?: string;
   };
 }
+
+/** @deprecated Use `TraceDockCiProvider`. */
+export type TestCenterCiProvider = TraceDockCiProvider;
+/** @deprecated Use `TraceDockCiOptions`. */
+export type TestCenterCiOptions = TraceDockCiOptions;
+/** @deprecated Use `TraceDockReporterOptions`. */
+export type TestCenterReporterOptions = TraceDockReporterOptions;
 
 export interface ReporterAttachment {
   name: string;

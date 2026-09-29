@@ -1,7 +1,7 @@
 {
-  "name": "@testcenter/playwright",
-  "version": "0.3.0",
-  "description": "Playwright reporter for publishing JUnit results and test evidence to Test Center",
+  "name": "@tracedock/playwright",
+  "version": "0.4.0",
+  "description": "Playwright reporter for publishing JUnit results and test evidence to TraceDock",
   "homepage": "https://github.com/nityagautam/TestCenter#readme",
   "bugs": {
     "url": "https://github.com/nityagautam/TestCenter/issues"
@@ -16,7 +16,7 @@
     "reporter",
     "junit",
     "test-results",
-    "testcenter"
+    "tracedock"
   ],
   "type": "module",
   "sideEffects": false,
@@ -33,7 +33,7 @@
     "dist",
     "README.md",
     "LOCAL_DEVELOPMENT.md",
-    "testcenter.env.example"
+    "tracedock.env.example"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

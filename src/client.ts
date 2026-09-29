@@ -51,7 +51,7 @@ export interface CreateSummaryRunResponse {
   dataMode: "summary_only";
 }
 
-export class TestCenterClient {
+export class TraceDockClient {
   private readonly baseUrl: string;
 
   constructor(
@@ -77,10 +77,10 @@ export class TestCenterClient {
       { method: "GET", signal: AbortSignal.timeout(timeoutMs) },
     );
     if (!isPublishCapabilitiesResponse(response)) {
-      throw new Error("Test Center returned an unsupported publish-capability response");
+      throw new Error("TraceDock returned an unsupported publish-capability response");
     }
     if (Date.parse(response.expiresAt) <= Date.now()) {
-      throw new Error("Test Center returned an expired publish-capability response");
+      throw new Error("TraceDock returned an expired publish-capability response");
     }
     return response;
   }
@@ -179,7 +179,7 @@ export class TestCenterClient {
     });
 
     if (!response.ok) {
-      let message = `Test Center API returned HTTP ${response.status}`;
+      let message = `TraceDock API returned HTTP ${response.status}`;
       try {
         const body = (await response.json()) as { error?: { message?: string }; message?: string };
         message = body.error?.message ?? body.message ?? message;

@@ -6,7 +6,7 @@ import { PortableRunBundle, resolveBundleMode, type BundleMode } from "./bundle.
 import {
   HttpError,
   Semaphore,
-  TestCenterClient,
+  TraceDockClient,
   type ArtifactUpload,
   type CreateRunResponse,
   type PublishCapabilitiesResponse,
@@ -20,12 +20,12 @@ import type {
   ReporterSuite,
   ReporterTestCase,
   ReporterTestResult,
-  TestCenterCiOptions,
-  TestCenterReporterOptions,
+  TraceDockCiOptions,
+  TraceDockReporterOptions,
 } from "./types.js";
 
 interface ActiveRun {
-  client: TestCenterClient;
+  client: TraceDockClient;
   response: CreateRunResponse;
   reportUpload: ArtifactUpload;
   junitPath: string;
@@ -49,7 +49,7 @@ interface ResolvedPaths {
 type PublishMode = "full" | "summary_only";
 
 interface SummaryPublication {
-  client: TestCenterClient;
+  client: TraceDockClient;
   summaryUrl: string;
   bundleId: string;
   baseUrl: string;
@@ -62,8 +62,8 @@ interface SummaryPublication {
 const CONFIGURATION_GUIDE =
   "https://github.com/nityagautam/TestCenter/tree/v1/src/packages/playwright-reporter-plugin#configure";
 
-export default class TestCenterReporter {
-  private readonly options: TestCenterReporterOptions;
+export default class TraceDockReporter {
+  private readonly options: TraceDockReporterOptions;
   private readonly uploads: Semaphore;
   private runPromise: Promise<ActiveRun | null> | undefined;
   private modePromise: Promise<PublishMode | null> | undefined;
@@ -74,7 +74,7 @@ export default class TestCenterReporter {
   private publishFailed = false;
   private summary: SummaryPublication | undefined;
 
-  constructor(options: TestCenterReporterOptions = { junitFile: "" }) {
+  constructor(options: TraceDockReporterOptions = { junitFile: "" }) {
     this.options = options;
     const requested = Math.floor(options.uploadConcurrency ?? 3);
     this.uploads = new Semaphore(
@@ -100,35 +100,34 @@ export default class TestCenterReporter {
     const allTests = suite.allTests();
     const testPriorities = priorityTagsEnabled(
       this.options.priority?.fromTags,
-      process.env.TESTCENTER_PRIORITY_FROM_TAGS,
+      reporterEnv("PRIORITY_FROM_TAGS"),
     )
       ? prepareTestPriorities(allTests, this.rootDir, (message) => this.warn(message))
       : [];
 
     const detected = detectMetadata(process.env);
     const startedAt = new Date();
-    const branch = this.options.branch ?? process.env.TESTCENTER_BRANCH ?? detected.branch;
-    const commitSha =
-      this.options.commitSha ?? process.env.TESTCENTER_COMMIT_SHA ?? detected.commitSha;
+    const branch = this.options.branch ?? reporterEnv("BRANCH") ?? detected.branch;
+    const commitSha = this.options.commitSha ?? reporterEnv("COMMIT_SHA") ?? detected.commitSha;
     const pullRequest =
       this.options.pullRequest ??
-      positiveInteger(process.env.TESTCENTER_PULL_REQUEST) ??
+      positiveInteger(reporterEnv("PULL_REQUEST")) ??
       detected.pullRequest;
     const ci = resolveCiContext(this.options.ci, process.env, detected.ci);
     const shard = config.shard
       ? {
-          groupId: first(process.env.TESTCENTER_SHARD_GROUP, ci?.buildId, randomUUID()) as string,
+          groupId: first(reporterEnv("SHARD_GROUP"), ci?.buildId, randomUUID()) as string,
           index: config.shard.current - 1,
           total: config.shard.total,
         }
       : undefined;
 
-    const configuredRunName = first(this.options.name, process.env.TESTCENTER_RUN_NAME);
+    const configuredRunName = first(this.options.name, reporterEnv("RUN_NAME"));
     const baseRunName = configuredRunName ?? defaultRunName(ci?.buildNumber);
     const runName = formatRunName(
       baseRunName,
       startedAt,
-      first(this.options.namePattern, process.env.TESTCENTER_RUN_NAME_PATTERN),
+      first(this.options.namePattern, reporterEnv("RUN_NAME_PATTERN")),
     );
     const missingContext = missingRunContext(configuredRunName, ci);
     if (missingContext.length > 0) this.runContextWarning(missingContext, runName);
@@ -136,7 +135,7 @@ export default class TestCenterReporter {
     const publishSettings = this.resolvePublishSettings();
     const projectHint =
       typeof publishSettings === "string"
-        ? first(this.options.project, process.env.TESTCENTER_PROJECT)
+        ? first(this.options.project, reporterEnv("PROJECT"))
         : publishSettings.project;
     const createPortableBundle = () => {
       if (paths.bundleMode === "off" || this.bundle) return;
@@ -150,7 +149,7 @@ export default class TestCenterReporter {
         run: removeUndefined({
           name: runName,
           framework: "playwright" as const,
-          environment: first(this.options.environment, process.env.TESTCENTER_ENVIRONMENT),
+          environment: first(this.options.environment, reporterEnv("ENVIRONMENT")),
           branch,
           commitSha,
           pullRequest,
@@ -173,12 +172,12 @@ export default class TestCenterReporter {
       return;
     }
 
-    const client = new TestCenterClient(publishSettings.baseUrl, publishSettings.token);
+    const client = new TraceDockClient(publishSettings.baseUrl, publishSettings.token);
     const commonBody = {
       project: publishSettings.project,
       name: runName,
       framework: "playwright",
-      environment: first(this.options.environment, process.env.TESTCENTER_ENVIRONMENT),
+      environment: first(this.options.environment, reporterEnv("ENVIRONMENT")),
       branch,
       commitSha,
       pullRequest,
@@ -350,7 +349,7 @@ export default class TestCenterReporter {
         if (retain) {
           const outputPath = await this.bundle.finalize(junitPath);
           this.output(`Portable run bundle: ${outputPath}`);
-          this.output("Upload this ZIP from the Test Center project Upload page.");
+          this.output("Upload this ZIP from the TraceDock project Upload page.");
         } else {
           await this.bundle.discard();
         }
@@ -475,7 +474,7 @@ export default class TestCenterReporter {
       );
       if (declared.uploads.length !== attachments.length) {
         throw new Error(
-          `Test Center returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
+          `TraceDock returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
         );
       }
       await Promise.all(
@@ -492,13 +491,13 @@ export default class TestCenterReporter {
   }
 
   private resolvePublishSettings(): PublishSettings | string {
-    const baseUrl = first(this.options.url, process.env.TESTCENTER_URL);
-    const token = first(process.env.TESTCENTER_TOKEN);
-    const project = first(this.options.project, process.env.TESTCENTER_PROJECT);
+    const baseUrl = first(this.options.url, reporterEnv("URL"));
+    const token = first(reporterEnv("TOKEN"));
+    const project = first(this.options.project, reporterEnv("PROJECT"));
     const missing = [
-      !baseUrl ? "TESTCENTER_URL" : undefined,
-      !token ? "TESTCENTER_TOKEN" : undefined,
-      !project ? "TESTCENTER_PROJECT (or reporter project option)" : undefined,
+      !baseUrl ? "TRACEDOCK_URL" : undefined,
+      !token ? "TRACEDOCK_TOKEN" : undefined,
+      !project ? "TRACEDOCK_PROJECT (or reporter project option)" : undefined,
     ].filter((value): value is string => value !== undefined);
     if (missing.length > 0) return `missing ${missing.join(", ")}`;
     if (!baseUrl || !token || !project) {
@@ -508,17 +507,17 @@ export default class TestCenterReporter {
     try {
       const url = new URL(baseUrl);
       if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return "TESTCENTER_URL must use http or https";
+        return "TRACEDOCK_URL must use http or https";
       }
     } catch {
-      return "TESTCENTER_URL is not a valid URL";
+      return "TRACEDOCK_URL is not a valid URL";
     }
 
     return {
       baseUrl,
       token,
       project,
-      organization: first(this.options.organization, process.env.TESTCENTER_ORG),
+      organization: first(this.options.organization, reporterEnv("ORG")),
     };
   }
 
@@ -527,25 +526,22 @@ export default class TestCenterReporter {
     if (!junitFile) return "missing reporter junitFile option";
     const configDirectory = config.configFile ? dirname(resolve(config.configFile)) : process.cwd();
     const junitPath = resolve(configDirectory, junitFile);
-    const requestedMode = first(this.options.bundle?.mode, process.env.TESTCENTER_BUNDLE_MODE);
+    const requestedMode = first(this.options.bundle?.mode, reporterEnv("BUNDLE_MODE"));
     if (requestedMode && !["always", "on-failure", "off"].includes(requestedMode)) {
       this.warn(`Unknown bundle mode "${requestedMode}"; using "always".`);
     }
-    const bundleOutput = first(
-      this.options.bundle?.outputDir,
-      process.env.TESTCENTER_BUNDLE_OUTPUT_DIR,
-    );
+    const bundleOutput = first(this.options.bundle?.outputDir, reporterEnv("BUNDLE_OUTPUT_DIR"));
     return {
       junitPath,
       bundleMode: resolveBundleMode(requestedMode),
       bundleOutputDirectory: bundleOutput
         ? resolve(configDirectory, bundleOutput)
-        : join(dirname(junitPath), "testcenter-bundles"),
+        : join(dirname(junitPath), "tracedock-bundles"),
     };
   }
 
   private warn(message: string): void {
-    process.stderr.write(`[testcenter] Warning: ${safeErrorMessage(message)}\n`);
+    process.stderr.write(`[tracedock] Warning: ${safeErrorMessage(message)}\n`);
   }
 
   /**
@@ -558,54 +554,54 @@ export default class TestCenterReporter {
    */
   private configurationWarning(reason: string): void {
     const lines = [
-      "Test Center reporter is not configured; this run will not be published.",
+      "TraceDock reporter is not configured; this run will not be published.",
       `Missing configuration: ${reason.replace(/^missing\s+/, "")}.`,
       "Configure the environment:",
-      "  TESTCENTER_URL=https://testcenter.example.com",
-      "  TESTCENTER_TOKEN=tc_...",
-      "  TESTCENTER_PROJECT=checkout-web",
+      "  TRACEDOCK_URL=https://tracedock.example.com",
+      "  TRACEDOCK_TOKEN=td_...",
+      "  TRACEDOCK_PROJECT=checkout-web",
       "Configure run and CI context (recommended):",
-      "  TESTCENTER_RUN_NAME=checkout-e2e",
-      "  TESTCENTER_CI_PROVIDER=github",
-      "  TESTCENTER_CI_BUILD_NUMBER=84",
-      "  TESTCENTER_CI_PIPELINE_NAME='Nightly regression'",
-      "  TESTCENTER_CI_JOB_NAME=playwright-chromium",
-      "  TESTCENTER_CI_JOB_URL=https://ci.example/jobs/12001",
-      "Configure playwright.config.ts with evidence defaults plus the JUnit and Test Center reporters:",
-      "  import { withTestCenterDefaults } from '@testcenter/playwright';",
+      "  TRACEDOCK_RUN_NAME=checkout-e2e",
+      "  TRACEDOCK_CI_PROVIDER=github",
+      "  TRACEDOCK_CI_BUILD_NUMBER=84",
+      "  TRACEDOCK_CI_PIPELINE_NAME='Nightly regression'",
+      "  TRACEDOCK_CI_JOB_NAME=playwright-chromium",
+      "  TRACEDOCK_CI_JOB_URL=https://ci.example/jobs/12001",
+      "Configure playwright.config.ts with evidence defaults plus the JUnit and TraceDock reporters:",
+      "  import { withTraceDockDefaults } from '@tracedock/playwright';",
       "  const junitFile = 'test-results/junit.xml';",
-      "  export default defineConfig(withTestCenterDefaults({",
+      "  export default defineConfig(withTraceDockDefaults({",
       "    reporter: [",
       "      ['junit', { outputFile: junitFile, includeRetries: true }],",
-      "      ['@testcenter/playwright', { junitFile }],",
+      "      ['@tracedock/playwright', { junitFile }],",
       "    ],",
       "  }));",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[testcenter] ${line}`).join("\n")}\n`);
+    process.stderr.write(`${lines.map((line) => `[tracedock] ${line}`).join("\n")}\n`);
   }
 
   /** Missing labels should be discoverable without making observability break the test command. */
   private runContextWarning(missing: readonly string[], runName: string): void {
     const lines = [
-      "Test Center run context is incomplete; publishing will continue.",
+      "TraceDock run context is incomplete; publishing will continue.",
       `Missing configuration: ${missing.join(", ")}.`,
       `Run name for this publication: ${runName}.`,
-      "Set reporter options (name, ci) or the corresponding TESTCENTER_RUN_NAME and TESTCENTER_CI_* environment variables.",
+      "Set reporter options (name, ci) or the corresponding TRACEDOCK_RUN_NAME and TRACEDOCK_CI_* environment variables.",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[testcenter] ${line}`).join("\n")}\n`);
+    process.stderr.write(`${lines.map((line) => `[tracedock] ${line}`).join("\n")}\n`);
   }
 
   private output(message: string): void {
-    process.stdout.write(`[testcenter] ${message}\n`);
+    process.stdout.write(`[tracedock] ${message}\n`);
   }
 
   private async writeGithubSummary(runUrl: string): Promise<void> {
     const summary = process.env.GITHUB_STEP_SUMMARY;
     if (!summary) return;
     try {
-      await appendFile(summary, `\n[Test Center run](${runUrl})\n`, "utf8");
+      await appendFile(summary, `\n[TraceDock run](${runUrl})\n`, "utf8");
     } catch (error) {
       this.warn(`Could not update the GitHub job summary: ${safeErrorMessage(error)}`);
     }
@@ -632,18 +628,18 @@ function defaultRunName(buildNumber: string | undefined): string {
 
 function missingRunContext(
   configuredRunName: string | undefined,
-  ci: TestCenterCiOptions | undefined,
+  ci: TraceDockCiOptions | undefined,
 ): string[] {
   return [
-    !configuredRunName ? "TESTCENTER_RUN_NAME (or reporter name option)" : undefined,
-    !ci?.provider ? "TESTCENTER_CI_PROVIDER" : undefined,
+    !configuredRunName ? "TRACEDOCK_RUN_NAME (or reporter name option)" : undefined,
+    !ci?.provider ? "TRACEDOCK_CI_PROVIDER" : undefined,
     !ci?.buildId && !ci?.buildNumber
-      ? "TESTCENTER_CI_BUILD_ID or TESTCENTER_CI_BUILD_NUMBER"
+      ? "TRACEDOCK_CI_BUILD_ID or TRACEDOCK_CI_BUILD_NUMBER"
       : undefined,
-    !ci?.pipelineName ? "TESTCENTER_CI_PIPELINE_NAME (or TESTCENTER_CI_BUILD_NAME)" : undefined,
-    !ci?.jobName ? "TESTCENTER_CI_JOB_NAME" : undefined,
+    !ci?.pipelineName ? "TRACEDOCK_CI_PIPELINE_NAME (or TRACEDOCK_CI_BUILD_NAME)" : undefined,
+    !ci?.jobName ? "TRACEDOCK_CI_JOB_NAME" : undefined,
     !ci?.jobUrl && !ci?.pipelineUrl
-      ? "TESTCENTER_CI_JOB_URL or TESTCENTER_CI_PIPELINE_URL"
+      ? "TRACEDOCK_CI_JOB_URL or TRACEDOCK_CI_PIPELINE_URL"
       : undefined,
   ].filter((value): value is string => value !== undefined);
 }
@@ -667,6 +663,11 @@ function boundedInteger(
 
 function first(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => value !== undefined && value.trim() !== "")?.trim();
+}
+
+/** New TraceDock names win while existing Test Center installations migrate without a flag day. */
+function reporterEnv(name: string): string | undefined {
+  return first(process.env[`TRACEDOCK_${name}`], process.env[`TESTCENTER_${name}`]);
 }
 
 function normalizeTags(input: Record<string, string | undefined>): Record<string, string> {

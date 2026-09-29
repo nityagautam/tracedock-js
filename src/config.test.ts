@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { withTestCenterDefaults } from "./config.js";
+import { withTraceDockDefaults } from "./config.js";
 
-describe("withTestCenterDefaults", () => {
+describe("withTraceDockDefaults", () => {
   it("defaults trace and video when use is absent", () => {
-    const configured = withTestCenterDefaults({ reporter: [["line"]] });
+    const configured = withTraceDockDefaults({ reporter: [["line"]] });
 
     expect(configured.use).toEqual({
       trace: "retain-on-failure",
@@ -12,7 +12,7 @@ describe("withTestCenterDefaults", () => {
   });
 
   it("preserves explicit evidence policies and unrelated use settings", () => {
-    const configured = withTestCenterDefaults({
+    const configured = withTraceDockDefaults({
       use: {
         baseURL: "https://example.test",
         screenshot: "only-on-failure",
@@ -32,7 +32,7 @@ describe("withTestCenterDefaults", () => {
   it("defaults one missing policy without mutating the input", () => {
     const use = { screenshot: "only-on-failure", trace: "on" };
     const input = { retries: 2, use };
-    const configured = withTestCenterDefaults(input);
+    const configured = withTraceDockDefaults(input);
 
     expect(configured).not.toBe(input);
     expect(configured.use).not.toBe(use);

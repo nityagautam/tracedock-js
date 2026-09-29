@@ -5,13 +5,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { PreparedAttachment } from "./attachments.js";
 import type { TestPriorityDeclaration } from "./priorities.js";
 import type { StepBatch } from "./steps.js";
-import type { TestCenterCiOptions } from "./types.js";
+import type { TraceDockCiOptions } from "./types.js";
 import { REPORTER_VERSION } from "./version.js";
 import { writeStoredZip } from "./zip.js";
 
 export type BundleMode = "always" | "on-failure" | "off";
 
-// The reporter is published without Test Center's private core package, so these mirror the
+// The reporter is published without TraceDock's private core package, so these mirror the
 // server contract deliberately. Boundary tests on both packages keep the values aligned.
 export const MAX_PORTABLE_BUNDLE_MANIFEST_BYTES = 64 * 1024 * 1024;
 export const MAX_PORTABLE_BUNDLE_EVIDENCE_FILES = 10_000;
@@ -24,7 +24,7 @@ export interface BundleRunMetadata {
   commitSha?: string;
   pullRequest?: number;
   startedAt: string;
-  ci?: TestCenterCiOptions;
+  ci?: TraceDockCiOptions;
   shard?: { groupId: string; index: number; total: number };
   tags: Record<string, string>;
 }
@@ -75,7 +75,7 @@ export class PortableRunBundle {
     this.bundleId = input.bundleId;
     this.mode = input.mode;
     this.outputDirectory = resolve(input.outputDirectory);
-    this.stageRoot = join(this.outputDirectory, `.testcenter-staging-${input.bundleId}`);
+    this.stageRoot = join(this.outputDirectory, `.tracedock-staging-${input.bundleId}`);
   }
 
   async addAttempt(input: {
@@ -137,7 +137,7 @@ export class PortableRunBundle {
       bundleId: this.input.bundleId,
       createdAt: new Date().toISOString(),
       producer: {
-        name: "@testcenter/playwright",
+        name: "@tracedock/playwright",
         version: REPORTER_VERSION,
         playwrightVersion: this.input.playwrightVersion,
       },
@@ -165,7 +165,7 @@ export class PortableRunBundle {
     await writeFile(manifestPath, manifestJson, "utf8");
     const destination = await availableOutputPath(
       this.outputDirectory,
-      `${safeFileName(this.input.run.name)}.testcenter-run.zip`,
+      `${safeFileName(this.input.run.name)}.tracedock-run.zip`,
     );
     await writeStoredZip(destination, [
       { name: "manifest.json", path: manifestPath },
@@ -213,7 +213,7 @@ async function hashFile(path: string): Promise<{ bytes: number; sha256: string }
 
 async function availableOutputPath(directory: string, filename: string): Promise<string> {
   await mkdir(directory, { recursive: true });
-  const extension = ".testcenter-run.zip";
+  const extension = ".tracedock-run.zip";
   const stem = filename.endsWith(extension) ? filename.slice(0, -extension.length) : filename;
   for (let occurrence = 1; occurrence < 10_000; occurrence += 1) {
     const candidate = join(

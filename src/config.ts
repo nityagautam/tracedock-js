@@ -10,7 +10,7 @@ type DefaultedPolicy<TUse extends object, TKey extends "trace" | "video"> = TKey
   ? Exclude<TUse[TKey], null | undefined> | RetainOnFailure
   : RetainOnFailure;
 
-export type TestCenterEvidenceDefaults<TUse extends object = object> = Omit<
+export type TraceDockEvidenceDefaults<TUse extends object = object> = Omit<
   TUse,
   "trace" | "video"
 > & {
@@ -18,17 +18,17 @@ export type TestCenterEvidenceDefaults<TUse extends object = object> = Omit<
   video: DefaultedPolicy<TUse, "video">;
 };
 
-type TestCenterConfig<TConfig extends object> = Omit<TConfig, "use"> & {
-  use: TestCenterEvidenceDefaults<ConfigUse<TConfig>>;
+type TraceDockConfig<TConfig extends object> = Omit<TConfig, "use"> & {
+  use: TraceDockEvidenceDefaults<ConfigUse<TConfig>>;
 };
 
 /**
  * Applies evidence policy before Playwright resolves projects. A reporter callback runs too late
  * to change capture behavior, so this stays an ordinary, immutable config transformation.
  */
-export function withTestCenterDefaults<const TConfig extends object>(
+export function withTraceDockDefaults<const TConfig extends object>(
   config: TConfig,
-): TestCenterConfig<TConfig> {
+): TraceDockConfig<TConfig> {
   const use = ((config as { use?: Record<string, unknown> }).use ?? {}) as Record<string, unknown>;
   return {
     ...config,
@@ -37,5 +37,12 @@ export function withTestCenterDefaults<const TConfig extends object>(
       trace: use.trace ?? "retain-on-failure",
       video: use.video ?? "retain-on-failure",
     },
-  } as TestCenterConfig<TConfig>;
+  } as TraceDockConfig<TConfig>;
 }
+
+/** @deprecated Use `withTraceDockDefaults`. */
+export const withTestCenterDefaults = withTraceDockDefaults;
+
+/** @deprecated Use `TraceDockEvidenceDefaults`. */
+export type TestCenterEvidenceDefaults<TUse extends object = object> =
+  TraceDockEvidenceDefaults<TUse>;

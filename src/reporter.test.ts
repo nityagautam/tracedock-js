@@ -6,20 +6,20 @@ import {
   MAX_PORTABLE_BUNDLE_EVIDENCE_FILES,
   MAX_PORTABLE_BUNDLE_MANIFEST_BYTES,
 } from "./bundle.js";
-import TestCenterReporter from "./reporter.js";
+import TraceDockReporter from "./reporter.js";
 import type { ReporterFullConfig, ReporterTestCase, ReporterTestResult } from "./types.js";
 
 const originalEnvironment = { ...process.env };
 
-describe("TestCenterReporter", () => {
+describe("TraceDockReporter", () => {
   let directory: string;
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), "testcenter-reporter-"));
-    process.env.TESTCENTER_URL = "https://testcenter.example";
-    process.env.TESTCENTER_TOKEN = "super-secret-token";
-    process.env.TESTCENTER_PROJECT = "checkout-web";
-    process.env.TESTCENTER_ORG = "acme";
+    directory = await mkdtemp(join(tmpdir(), "tracedock-reporter-"));
+    process.env.TRACEDOCK_URL = "https://tracedock.example";
+    process.env.TRACEDOCK_TOKEN = "super-secret-token";
+    process.env.TRACEDOCK_PROJECT = "checkout-web";
+    process.env.TRACEDOCK_ORG = "acme";
   });
 
   afterEach(async () => {
@@ -54,7 +54,7 @@ describe("TestCenterReporter", () => {
         });
       }
 
-      if (url === "https://testcenter.example/api/v1/runs") {
+      if (url === "https://tracedock.example/api/v1/runs") {
         return jsonResponse(
           {
             runId: "run-1",
@@ -99,7 +99,7 @@ describe("TestCenterReporter", () => {
       if (url.endsWith("/test-priorities")) {
         return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
       }
-      if (url === "https://testcenter.example/api/v1/runs/run-1/complete") {
+      if (url === "https://tracedock.example/api/v1/runs/run-1/complete") {
         return jsonResponse({ runId: "run-1", status: "parsing" });
       }
       if (url.startsWith("https://storage.example/")) return new Response(null, { status: 200 });
@@ -108,7 +108,7 @@ describe("TestCenterReporter", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TestCenterReporter({
+    const reporter = new TraceDockReporter({
       junitFile: "reports/junit.xml",
       name: "Checkout E2E",
       ci: {
@@ -195,12 +195,12 @@ describe("TestCenterReporter", () => {
     for (const call of storageCalls) {
       expect(new Headers(call.init.headers).has("authorization")).toBe(false);
     }
-    expect(calls.at(-1)?.url).toBe("https://testcenter.example/api/v1/runs/run-1/complete");
+    expect(calls.at(-1)?.url).toBe("https://tracedock.example/api/v1/runs/run-1/complete");
 
-    const bundleDirectory = join(directory, "reports", "testcenter-bundles");
+    const bundleDirectory = join(directory, "reports", "tracedock-bundles");
     const bundles = await readdir(bundleDirectory);
     expect(bundles).toHaveLength(1);
-    expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
+    expect(bundles[0]).toMatch(/\.tracedock-run\.zip$/);
     const archive = await readFile(join(bundleDirectory, bundles[0]!));
     const storedText = archive.toString("utf8");
     expect(storedText).toContain("manifest.json");
@@ -211,7 +211,7 @@ describe("TestCenterReporter", () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("0.3.0");
+    expect(packageJson.version).toBe("0.4.0");
     expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
@@ -220,13 +220,13 @@ describe("TestCenterReporter", () => {
   });
 
   it("writes a portable ZIP to a configured directory when live publishing is unavailable", async () => {
-    delete process.env.TESTCENTER_TOKEN;
+    delete process.env.TRACEDOCK_TOKEN;
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
-    const reporter = new TestCenterReporter({
+    const reporter = new TraceDockReporter({
       junitFile: "reports/junit.xml",
       bundle: { outputDir: "portable-output" },
     });
@@ -243,7 +243,7 @@ describe("TestCenterReporter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     const bundles = await readdir(join(directory, "portable-output"));
     expect(bundles).toHaveLength(1);
-    expect(bundles[0]).toMatch(/\.testcenter-run\.zip$/);
+    expect(bundles[0]).toMatch(/\.tracedock-run\.zip$/);
   });
 
   it("publishes only aggregate counts when the project is Summary-only", async () => {
@@ -280,7 +280,7 @@ describe("TestCenterReporter", () => {
       }),
     );
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [testCase()] });
     reporter.onTestEnd(testCase(), {
       retry: 0,
@@ -317,28 +317,57 @@ describe("TestCenterReporter", () => {
     });
     expect(String(calls[1]?.init.body)).not.toContain("secret");
     expect(stdout.mock.calls.flat().join(" ")).toContain("Published Summary-only run");
-    await expect(readdir(join(directory, "reports", "testcenter-bundles"))).rejects.toThrow();
+    await expect(readdir(join(directory, "reports", "tracedock-bundles"))).rejects.toThrow();
   });
 
   it("skips as one gate when credentials are incomplete", () => {
-    delete process.env.TESTCENTER_TOKEN;
+    delete process.env.TRACEDOCK_TOKEN;
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
 
     expect(fetchMock).not.toHaveBeenCalled();
     const output = stderr.mock.calls.flat().join("");
-    expect(output).toContain("Test Center reporter is not configured");
-    expect(output).toContain("Missing configuration: TESTCENTER_TOKEN");
-    expect(output).toContain("TESTCENTER_URL=https://testcenter.example.com");
-    expect(output).toContain("TESTCENTER_RUN_NAME=checkout-e2e");
-    expect(output).toContain("TESTCENTER_CI_JOB_URL=https://ci.example/jobs/12001");
-    expect(output).toContain("withTestCenterDefaults");
-    expect(output).toContain("['@testcenter/playwright', { junitFile }]");
+    expect(output).toContain("TraceDock reporter is not configured");
+    expect(output).toContain("Missing configuration: TRACEDOCK_TOKEN");
+    expect(output).toContain("TRACEDOCK_URL=https://tracedock.example.com");
+    expect(output).toContain("TRACEDOCK_RUN_NAME=checkout-e2e");
+    expect(output).toContain("TRACEDOCK_CI_JOB_URL=https://ci.example/jobs/12001");
+    expect(output).toContain("withTraceDockDefaults");
+    expect(output).toContain("['@tracedock/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
+  });
+
+  it("accepts legacy Test Center connection variables during migration", () => {
+    delete process.env.TRACEDOCK_URL;
+    delete process.env.TRACEDOCK_TOKEN;
+    delete process.env.TRACEDOCK_PROJECT;
+    delete process.env.TRACEDOCK_ORG;
+    process.env.TESTCENTER_URL = "https://legacy.example";
+    process.env.TESTCENTER_TOKEN = "legacy-secret";
+    process.env.TESTCENTER_PROJECT = "legacy-project";
+    process.env.TESTCENTER_ORG = "legacy-org";
+    const fetchMock = vi.fn(
+      async () =>
+        new Promise<Response>(() => {
+          // Only the synchronously selected endpoint and credentials are under test.
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
+    reporter.onBegin(config(directory), { allTests: () => [] });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://legacy.example/api/v1/projects/legacy-project/publish-capabilities",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: "Bearer legacy-secret" }),
+      }),
+    );
   });
 
   it("reports missing run and CI context without blocking publication", () => {
@@ -351,23 +380,23 @@ describe("TestCenterReporter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
 
     const output = stderr.mock.calls.flat().join("");
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(output).toContain("Test Center run context is incomplete; publishing will continue");
-    expect(output).toContain("TESTCENTER_RUN_NAME (or reporter name option)");
-    expect(output).toContain("TESTCENTER_CI_BUILD_ID or TESTCENTER_CI_BUILD_NUMBER");
-    expect(output).toContain("TESTCENTER_CI_JOB_NAME");
-    expect(output).toContain("TESTCENTER_CI_JOB_URL or TESTCENTER_CI_PIPELINE_URL");
+    expect(output).toContain("TraceDock run context is incomplete; publishing will continue");
+    expect(output).toContain("TRACEDOCK_RUN_NAME (or reporter name option)");
+    expect(output).toContain("TRACEDOCK_CI_BUILD_ID or TRACEDOCK_CI_BUILD_NUMBER");
+    expect(output).toContain("TRACEDOCK_CI_JOB_NAME");
+    expect(output).toContain("TRACEDOCK_CI_JOB_URL or TRACEDOCK_CI_PIPELINE_URL");
     expect(output).toMatch(/Run name for this publication: Playwright run-\d{8}T\d{9}Z/);
   });
 
   it("does not publish during Playwright test discovery", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
 
     reporter.onBegin(
       { ...config(directory), argv: ["node", "playwright", "test", "--list"] },
@@ -383,7 +412,7 @@ describe("TestCenterReporter", () => {
   it("recognizes discovery on Playwright versions that do not expose config.argv", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
     const originalArguments = process.argv;
     process.argv = ["node", "playwright", "test", "--list"];
     try {
@@ -406,7 +435,7 @@ describe("TestCenterReporter", () => {
       }),
     );
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const reporter = new TestCenterReporter({ junitFile: "reports/junit.xml" });
+    const reporter = new TraceDockReporter({ junitFile: "reports/junit.xml" });
 
     reporter.onBegin(config(directory), { allTests: () => [] });
     await reporter.onExit();

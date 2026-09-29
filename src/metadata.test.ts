@@ -61,9 +61,9 @@ describe("CI metadata detection", () => {
       resolveCiContext(
         { jobName: "Configured browser tests" },
         {
-          TESTCENTER_CI_BUILD_NUMBER: "84",
-          TESTCENTER_CI_BUILD_NAME: "Nightly regression",
-          TESTCENTER_CI_JOB_URL: "https://ci.example/jobs/84",
+          TRACEDOCK_CI_BUILD_NUMBER: "84",
+          TRACEDOCK_CI_BUILD_NAME: "Nightly regression",
+          TRACEDOCK_CI_JOB_URL: "https://ci.example/jobs/84",
         },
         {
           provider: "github",
@@ -82,5 +82,18 @@ describe("CI metadata detection", () => {
       pipelineName: "Nightly regression",
       pipelineUrl: "https://github.example/acme/checkout/actions/runs/9001",
     });
+  });
+
+  it("accepts legacy Test Center CI environment variables", () => {
+    expect(
+      resolveCiContext(
+        {},
+        {
+          TESTCENTER_CI_BUILD_NUMBER: "84",
+          TESTCENTER_CI_JOB_NAME: "Legacy browser tests",
+        },
+        { provider: "unknown" },
+      ),
+    ).toMatchObject({ buildNumber: "84", jobName: "Legacy browser tests" });
   });
 });

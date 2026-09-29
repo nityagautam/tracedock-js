@@ -1,7 +1,7 @@
-import type { TestCenterCiOptions, TestCenterCiProvider } from "./types.js";
+import type { TraceDockCiOptions, TraceDockCiProvider } from "./types.js";
 
-export interface CiContext extends TestCenterCiOptions {
-  provider: TestCenterCiProvider;
+export interface CiContext extends TraceDockCiOptions {
+  provider: TraceDockCiProvider;
 }
 
 export interface DetectedMetadata {
@@ -13,7 +13,7 @@ export interface DetectedMetadata {
 
 type Environment = NodeJS.ProcessEnv;
 
-const CI_PROVIDERS = new Set<TestCenterCiProvider>([
+const CI_PROVIDERS = new Set<TraceDockCiProvider>([
   "github",
   "gitlab",
   "jenkins",
@@ -38,52 +38,53 @@ export function detectMetadata(env: Environment): DetectedMetadata {
   if (env.TEAMCITY_VERSION) return teamcityMetadata(env);
 
   return compactMetadata({
-    branch: first(env.TESTCENTER_BRANCH, env.GIT_BRANCH, env.BRANCH_NAME),
-    commitSha: first(env.TESTCENTER_COMMIT_SHA, env.GIT_COMMIT),
-    pullRequest: positiveInteger(env.TESTCENTER_PULL_REQUEST),
+    branch: first(brandEnv(env, "BRANCH"), env.GIT_BRANCH, env.BRANCH_NAME),
+    commitSha: first(brandEnv(env, "COMMIT_SHA"), env.GIT_COMMIT),
+    pullRequest: positiveInteger(brandEnv(env, "PULL_REQUEST")),
   });
 }
 
 /**
  * CI systems with native variables need no configuration, while custom runners can supply the
- * same fields through stable Test Center names. Merge per field so adding one override (usually a
+ * same fields through stable TraceDock names. Merge per field so adding one override (usually a
  * friendlier job name) does not discard the URLs and build identifiers detected from the provider.
  */
 export function resolveCiContext(
-  configured: TestCenterCiOptions | undefined,
+  configured: TraceDockCiOptions | undefined,
   env: Environment,
   detected: CiContext | undefined,
-): TestCenterCiOptions | undefined {
-  const resolved = removeUndefined<TestCenterCiOptions>({
-    provider: configured?.provider ?? ciProvider(env.TESTCENTER_CI_PROVIDER) ?? detected?.provider,
-    buildId: first(configured?.buildId, env.TESTCENTER_CI_BUILD_ID, detected?.buildId),
+): TraceDockCiOptions | undefined {
+  const resolved = removeUndefined<TraceDockCiOptions>({
+    provider:
+      configured?.provider ?? ciProvider(brandEnv(env, "CI_PROVIDER")) ?? detected?.provider,
+    buildId: first(configured?.buildId, brandEnv(env, "CI_BUILD_ID"), detected?.buildId),
     buildNumber: first(
       configured?.buildNumber,
-      env.TESTCENTER_CI_BUILD_NUMBER,
+      brandEnv(env, "CI_BUILD_NUMBER"),
       detected?.buildNumber,
     ),
-    jobName: first(configured?.jobName, env.TESTCENTER_CI_JOB_NAME, detected?.jobName),
-    jobUrl: first(configured?.jobUrl, env.TESTCENTER_CI_JOB_URL, detected?.jobUrl),
+    jobName: first(configured?.jobName, brandEnv(env, "CI_JOB_NAME"), detected?.jobName),
+    jobUrl: first(configured?.jobUrl, brandEnv(env, "CI_JOB_URL"), detected?.jobUrl),
     pipelineName: first(
       configured?.pipelineName,
-      env.TESTCENTER_CI_PIPELINE_NAME,
-      env.TESTCENTER_CI_BUILD_NAME,
+      brandEnv(env, "CI_PIPELINE_NAME"),
+      brandEnv(env, "CI_BUILD_NAME"),
       detected?.pipelineName,
     ),
     pipelineUrl: first(
       configured?.pipelineUrl,
-      env.TESTCENTER_CI_PIPELINE_URL,
+      brandEnv(env, "CI_PIPELINE_URL"),
       detected?.pipelineUrl,
     ),
     actor: first(
       configured?.actor,
-      env.TESTCENTER_CI_ACTOR,
-      env.TESTCENTER_CI_TRIGGERED_BY,
+      brandEnv(env, "CI_ACTOR"),
+      brandEnv(env, "CI_TRIGGERED_BY"),
       detected?.actor,
     ),
     triggerEvent: first(
       configured?.triggerEvent,
-      env.TESTCENTER_CI_TRIGGER_EVENT,
+      brandEnv(env, "CI_TRIGGER_EVENT"),
       detected?.triggerEvent,
     ),
   });
@@ -256,14 +257,18 @@ function first(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => value !== undefined && value.trim() !== "")?.trim();
 }
 
+function brandEnv(env: Environment, name: string): string | undefined {
+  return first(env[`TRACEDOCK_${name}`], env[`TESTCENTER_${name}`]);
+}
+
 function positiveInteger(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function ciProvider(value: string | undefined): TestCenterCiProvider | undefined {
-  const normalized = value?.trim().toLowerCase() as TestCenterCiProvider | undefined;
+function ciProvider(value: string | undefined): TraceDockCiProvider | undefined {
+  const normalized = value?.trim().toLowerCase() as TraceDockCiProvider | undefined;
   return normalized && CI_PROVIDERS.has(normalized) ? normalized : undefined;
 }
 

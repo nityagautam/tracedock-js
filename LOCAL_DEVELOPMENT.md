@@ -1,13 +1,13 @@
 # Local package development
 
-Use this workflow to build `@testcenter/playwright`, create an npm-compatible tarball, and install
+Use this workflow to build `@tracedock/playwright`, create an npm-compatible tarball, and install
 that tarball into any local Playwright project. It exercises the same package contents a registry
 installation receives without publishing a version.
 
 Prerequisites:
 
 - Node.js 20 or newer.
-- Corepack and pnpm for the Test Center repository.
+- Corepack and pnpm for the TraceDock repository.
 - An existing Playwright project using npm, pnpm, or Yarn.
 
 ## macOS and Linux (zsh/bash)
@@ -15,25 +15,25 @@ Prerequisites:
 Set the two project paths. The tarball may remain in the operating system's temporary directory.
 
 ```bash
-TESTCENTER_REPO="/absolute/path/to/TestCenter"
+TRACEDOCK_REPO="/absolute/path/to/TraceDock"
 PLAYWRIGHT_PROJECT="/absolute/path/to/playwright-project"
-REPORTER_TARBALL="${TMPDIR:-/tmp}/testcenter-playwright-local.tgz"
+REPORTER_TARBALL="${TMPDIR:-/tmp}/tracedock-playwright-local.tgz"
 ```
 
-Install the Test Center workspace dependencies, then build and test the reporter:
+Install the TraceDock workspace dependencies, then build and test the reporter:
 
 ```bash
-cd "$TESTCENTER_REPO"
+cd "$TRACEDOCK_REPO"
 corepack enable
 pnpm install --frozen-lockfile
-pnpm --filter @testcenter/playwright build
-pnpm --filter @testcenter/playwright test
+pnpm --filter @tracedock/playwright build
+pnpm --filter @tracedock/playwright test
 ```
 
 Pack the reporter and optionally inspect the archive:
 
 ```bash
-pnpm --filter @testcenter/playwright pack --out "$REPORTER_TARBALL"
+pnpm --filter @tracedock/playwright pack --out "$REPORTER_TARBALL"
 tar -tzf "$REPORTER_TARBALL"
 ```
 
@@ -51,7 +51,7 @@ npm install --save-dev "$REPORTER_TARBALL"
 Verify that Node can load the package and that Playwright can read the project configuration:
 
 ```bash
-node -e "import('@testcenter/playwright').then(() => console.log('@testcenter/playwright loaded'))"
+node -e "import('@tracedock/playwright').then(() => console.log('@tracedock/playwright loaded'))"
 npx playwright test --list
 ```
 
@@ -61,26 +61,26 @@ Set the two project paths. `Join-Path` keeps the temporary tarball path valid re
 Windows user profile location.
 
 ```powershell
-$TestCenterRepo = "C:\path\to\TestCenter"
+$TraceDockRepo = "C:\path\to\TraceDock"
 $PlaywrightProject = "C:\path\to\playwright-project"
-$ReporterTarball = Join-Path $env:TEMP "testcenter-playwright-local.tgz"
+$ReporterTarball = Join-Path $env:TEMP "tracedock-playwright-local.tgz"
 ```
 
-Install the Test Center workspace dependencies, then build and test the reporter:
+Install the TraceDock workspace dependencies, then build and test the reporter:
 
 ```powershell
-Set-Location $TestCenterRepo
+Set-Location $TraceDockRepo
 corepack enable
 pnpm install --frozen-lockfile
-pnpm --filter '@testcenter/playwright' build
-pnpm --filter '@testcenter/playwright' test
+pnpm --filter '@tracedock/playwright' build
+pnpm --filter '@tracedock/playwright' test
 ```
 
 Pack the reporter and optionally inspect the archive with the `tar` included in current Windows
 installations:
 
 ```powershell
-pnpm --filter '@testcenter/playwright' pack --out $ReporterTarball
+pnpm --filter '@tracedock/playwright' pack --out $ReporterTarball
 tar -tzf $ReporterTarball
 ```
 
@@ -98,7 +98,7 @@ npm install --save-dev $ReporterTarball
 Verify the installation:
 
 ```powershell
-node -e "import('@testcenter/playwright').then(() => console.log('@testcenter/playwright loaded'))"
+node -e "import('@tracedock/playwright').then(() => console.log('@tracedock/playwright loaded'))"
 npx playwright test --list
 ```
 
@@ -110,10 +110,10 @@ to refresh the tarball after rebuilding it.
 macOS/Linux:
 
 ```bash
-cd "$TESTCENTER_REPO"
-pnpm --filter @testcenter/playwright build
-pnpm --filter @testcenter/playwright test
-pnpm --filter @testcenter/playwright pack --out "$REPORTER_TARBALL"
+cd "$TRACEDOCK_REPO"
+pnpm --filter @tracedock/playwright build
+pnpm --filter @tracedock/playwright test
+pnpm --filter @tracedock/playwright pack --out "$REPORTER_TARBALL"
 
 cd "$PLAYWRIGHT_PROJECT"
 npm install --save-dev --force "$REPORTER_TARBALL"
@@ -124,10 +124,10 @@ npm install --save-dev --force "$REPORTER_TARBALL"
 Windows PowerShell:
 
 ```powershell
-Set-Location $TestCenterRepo
-pnpm --filter '@testcenter/playwright' build
-pnpm --filter '@testcenter/playwright' test
-pnpm --filter '@testcenter/playwright' pack --out $ReporterTarball
+Set-Location $TraceDockRepo
+pnpm --filter '@tracedock/playwright' build
+pnpm --filter '@tracedock/playwright' test
+pnpm --filter '@tracedock/playwright' pack --out $ReporterTarball
 
 Set-Location $PlaywrightProject
 npm install --save-dev --force $ReporterTarball
@@ -140,7 +140,7 @@ Playwright test command.
 
 ## Configure the installed reporter
 
-Installation alone does not register the reporter. Add `@testcenter/playwright` beside
-Playwright's JUnit reporter in `playwright.config.ts`, then provide `TESTCENTER_URL`,
-`TESTCENTER_TOKEN`, and the project key. The complete helper and helper-free configurations are in
+Installation alone does not register the reporter. Add `@tracedock/playwright` beside
+Playwright's JUnit reporter in `playwright.config.ts`, then provide `TRACEDOCK_URL`,
+`TRACEDOCK_TOKEN`, and the project key. The complete helper and helper-free configurations are in
 the [package guide](README.md).
