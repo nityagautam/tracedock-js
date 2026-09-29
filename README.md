@@ -1,5 +1,8 @@
 # `@tracedock/playwright`
 
+Source development lives in the standalone `tracedock-js` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
+
+
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
 files and logs to TraceDock. Evidence is linked to the testcase, retry and originating step that
 produced it. Publishing is warning-only: a TraceDock or object-storage outage never changes
