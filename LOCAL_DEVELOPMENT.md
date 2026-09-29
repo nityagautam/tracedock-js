@@ -1,12 +1,15 @@
 # Local package development
 
-Use this workflow to build `@tracedock/playwright`, create an npm-compatible tarball, and install
+Use this workflow to build `@traceoptix/playwright`, create an npm-compatible tarball, and install
 that tarball into any local Playwright project. It exercises the same package contents a registry
 installation receives without publishing a version.
 
+The repository is named `traceoptix-playwright` on GitHub, and the npm package name is also
+`@traceoptix/playwright`.
+
 ## Quick start: build, pack, install
 
-From the tracedock-js repository root, build and test the reporter, then pack it directly into the
+From the `traceoptix-playwright` repository root, build and test the reporter, then pack it directly into the
 Playwright project's vendor directory:
 
 ```bash
@@ -17,29 +20,29 @@ npm pack . --pack-destination /absolute/path/to/playwright-project/scripts/vendo
 ```
 
 The final line printed by npm is the archive filename. For the current package version it is
-`tracedock-playwright-0.5.1.tgz`.
+`traceoptix-playwright-1.0.1.tgz`.
 
 From the Playwright project root, install that exact file:
 
 ```bash
-npm install --save-dev ./scripts/vendor/tracedock-playwright-0.5.1.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 If a workflow intentionally updates only `package.json` and `package-lock.json`, use:
 
 ```bash
 npm install --save-dev --package-lock-only --ignore-scripts \
-  @tracedock/playwright@file:scripts/vendor/tracedock-playwright-0.5.1.tgz
+  @traceoptix/playwright@file:scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 `--package-lock-only` does not install anything into `node_modules`; omit it for a usable local
 installation. The version in the install command must exactly match the `.tgz` filename emitted by
-`npm pack`. For example, a command naming `0.5.0` cannot install the current `0.5.1` archive.
+`npm pack`. For example, a command naming `1.0.0` cannot install the current `1.0.1` archive.
 
 Prerequisites:
 
 - Node.js 20 or newer.
-- Corepack and pnpm for the tracedock-js repository.
+- Corepack and pnpm for the `traceoptix-playwright` repository.
 - An existing Playwright project using npm, pnpm, or Yarn.
 
 ## macOS and Linux (zsh/bash)
@@ -48,7 +51,7 @@ Set the repository, target project and tarball destination paths. `npm pack` req
 destination directory to exist.
 
 ```bash
-TRACEDOCK_REPO="/absolute/path/to/tracedock-js"
+TRACEDOCK_REPO="/absolute/path/to/traceoptix-playwright"
 PLAYWRIGHT_PROJECT="/absolute/path/to/playwright-project"
 PACK_DESTINATION="/absolute/path/to/playwright-project/scripts/vendor"
 ```
@@ -63,7 +66,7 @@ pnpm build
 pnpm test
 ```
 
-Create the destination and pack from the tracedock-js repository root. The package's `prepack` script
+Create the destination and pack from the `traceoptix-playwright` repository root. The package's `prepack` script
 rebuilds `dist` as a final stale-output guard, even if the explicit build above was skipped.
 
 ```bash
@@ -99,7 +102,7 @@ npm install --save-dev "$REPORTER_TARBALL"
 Verify that Node can load the package and that Playwright can read the project configuration:
 
 ```bash
-node -e "import('@tracedock/playwright').then(() => console.log('@tracedock/playwright loaded'))"
+node -e "import('@traceoptix/playwright').then(() => console.log('@traceoptix/playwright loaded'))"
 npx playwright test --list
 ```
 
@@ -108,7 +111,7 @@ npx playwright test --list
 Set the repository, target project and tarball destination paths.
 
 ```powershell
-$TraceDockRepo = "C:\path\to\tracedock-js"
+$TraceDockRepo = "C:\path\to\traceoptix-playwright"
 $PlaywrightProject = "C:\path\to\playwright-project"
 $PackDestination = "C:\path\to\playwright-project\scripts\vendor"
 ```
@@ -123,7 +126,7 @@ pnpm build
 pnpm test
 ```
 
-Create the destination, pack from the tracedock-js repository root, and optionally inspect the archive
+Create the destination, pack from the `traceoptix-playwright` repository root, and optionally inspect the archive
 with the `tar` included in current Windows installations. The `prepack` script rebuilds `dist` as a
 final stale-output guard.
 
@@ -148,7 +151,7 @@ npm install --save-dev $ReporterTarball
 Verify the installation:
 
 ```powershell
-node -e "import('@tracedock/playwright').then(() => console.log('@tracedock/playwright loaded'))"
+node -e "import('@traceoptix/playwright').then(() => console.log('@traceoptix/playwright loaded'))"
 npx playwright test --list
 ```
 
@@ -191,7 +194,7 @@ Playwright test command.
 
 ## Configure the installed reporter
 
-Installation alone does not register the reporter. Add `@tracedock/playwright` beside
+Installation alone does not register the reporter. Add `@traceoptix/playwright` beside
 Playwright's JUnit reporter in `playwright.config.ts`, then provide `TRACEDOCK_URL`,
 `TRACEDOCK_TOKEN`, and the project key. The complete helper and helper-free configurations are in
 the [package guide](README.md).

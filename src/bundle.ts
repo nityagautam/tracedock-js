@@ -137,7 +137,7 @@ export class PortableRunBundle {
       bundleId: this.input.bundleId,
       createdAt: new Date().toISOString(),
       producer: {
-        name: "@tracedock/playwright",
+        name: "@traceoptix/playwright",
         version: REPORTER_VERSION,
         playwrightVersion: this.input.playwrightVersion,
       },

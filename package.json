@@ -1,17 +1,17 @@
 {
-  "name": "@tracedock/playwright",
-  "version": "1.0.1",
-  "description": "Playwright reporter for publishing JUnit results and test evidence to TraceDock",
-  "homepage": "https://github.com/nityagautam/tracedock-js#readme",
+  "name": "@traceoptix/playwright",
+  "version": "1.0.0",
+  "description": "Playwright reporter for publishing JUnit results and test evidence to TraceOptix",
+  "homepage": "https://github.com/nityagautam/traceoptix-playwright#readme",
   "bugs": {
-    "url": "https://github.com/nityagautam/tracedock-js/issues"
+    "url": "https://github.com/nityagautam/traceoptix-playwright/issues"
   },
   "keywords": [
     "playwright",
     "reporter",
     "junit",
     "test-results",
-    "tracedock"
+    "traceoptix"
   ],
   "type": "module",
   "sideEffects": false,

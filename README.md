@@ -1,6 +1,6 @@
-# `@tracedock/playwright`
+# `@traceoptix/playwright`
 
-Source development lives in the standalone `tracedock-js` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
+Source development lives in the standalone `traceoptix-playwright` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
 
 
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
@@ -17,18 +17,18 @@ have separate archive/structure limits. In the server repository, see
 ## Install
 
 ```bash
-npm install --save-dev @tracedock/playwright
+npm install --save-dev @traceoptix/playwright
 ```
 
 To build and pack an unpublished checkout, run these commands from the TraceDock repository root:
 
 ```bash
-pnpm --filter @tracedock/playwright build
-pnpm --filter @tracedock/playwright test
+pnpm --filter @traceoptix/playwright build
+pnpm --filter @traceoptix/playwright test
 mkdir -p /absolute/path/to/playwright-project/scripts/vendor
 npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
 cd /absolute/path/to/playwright-project
-npm install --save-dev ./scripts/vendor/tracedock-playwright-1.0.0.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
 ```
 
 `npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
@@ -47,7 +47,7 @@ for failed tests without repeating those policies in your configuration:
 
 ```ts
 import { defineConfig } from "@playwright/test";
-import { withTraceDockDefaults } from "@tracedock/playwright";
+import { withTraceDockDefaults } from "@traceoptix/playwright";
 
 const junitFile = "test-results/junit.xml";
 
@@ -57,7 +57,7 @@ export default defineConfig(
       ["line"],
       ["junit", { outputFile: junitFile, includeRetries: true }],
       [
-        "@tracedock/playwright",
+        "@traceoptix/playwright",
         {
           junitFile,
           project: "checkout-web",
@@ -102,7 +102,7 @@ export default defineConfig({
     ["line"],
     ["junit", { outputFile: junitFile, includeRetries: true }],
     [
-      "@tracedock/playwright",
+      "@traceoptix/playwright",
       {
         junitFile,
         project: "checkout-web",
@@ -166,7 +166,7 @@ npx playwright test
 A complete copyable template is included as [`tracedock.env.example`](tracedock.env.example):
 
 ```bash
-cp node_modules/@tracedock/playwright/tracedock.env.example .env.tracedock.local
+cp node_modules/@traceoptix/playwright/tracedock.env.example .env.tracedock.local
 # Edit the ignored .env.tracedock.local file, then load it before Playwright starts.
 set -a
 . ./.env.tracedock.local
@@ -197,7 +197,7 @@ path. If bundle creation is disabled or fails, the final warning states that exp
 the configured output directory when available.
 
 The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
-If `@tracedock/playwright` is absent from the reporter list, Playwright never loads it and no
+If `@traceoptix/playwright` is absent from the reporter list, Playwright never loads it and no
 package code can print a configuration message.
 
 ## Options
@@ -206,7 +206,7 @@ This example shows every reporter option. Supply only the fields your project ne
 
 ```ts
 [
-  "@tracedock/playwright",
+  "@traceoptix/playwright",
   {
     // Required and shared with Playwright's built-in JUnit reporter.
     junitFile: "test-results/reports/junit-result.xml",
@@ -318,7 +318,7 @@ Detected CI values can be overridden in reporter options with `ci.provider`, `ci
 
 ```ts
 [
-  "@tracedock/playwright",
+  "@traceoptix/playwright",
   {
     junitFile,
     name: "checkout-e2e",
@@ -418,7 +418,7 @@ reporter configuration when CI collects artifacts from a specific directory:
 
 ```ts
 [
-  "@tracedock/playwright",
+  "@traceoptix/playwright",
   {
     junitFile,
     bundle: {

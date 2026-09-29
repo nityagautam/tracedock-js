@@ -7,6 +7,7 @@ import {
   MAX_PORTABLE_BUNDLE_MANIFEST_BYTES,
 } from "./bundle.js";
 import TraceDockReporter from "./reporter.js";
+import { REPORTER_VERSION } from "./version.js";
 import type { ReporterFullConfig, ReporterTestCase, ReporterTestResult } from "./types.js";
 
 const originalEnvironment = { ...process.env };
@@ -219,7 +220,7 @@ describe("TraceDockReporter", () => {
     const packageJson = JSON.parse(
       await readFile(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version: string };
-    expect(packageJson.version).toBe("1.0.1");
+    expect(packageJson.version).toBe(REPORTER_VERSION);
     expect(storedText).toContain(`"version":"${packageJson.version}"`);
     expect(storedText).toContain(String(createBody.sourceBundleId));
     expect(storedText).toContain("Given a saved card");
@@ -396,7 +397,7 @@ describe("TraceDockReporter", () => {
     expect(output).toContain("TRACEDOCK_RUN_NAME=checkout-e2e");
     expect(output).toContain("TRACEDOCK_CI_JOB_URL=https://ci.example/jobs/12001");
     expect(output).toContain("withTraceDockDefaults");
-    expect(output).toContain("['@tracedock/playwright', { junitFile }]");
+    expect(output).toContain("['@traceoptix/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
   });
 
