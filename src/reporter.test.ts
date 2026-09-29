@@ -15,6 +15,9 @@ describe("TraceOptixReporter", () => {
   let directory: string;
 
   beforeEach(async () => {
+    // Use only each test's environment fixture: inherited CI metadata changes
+    // published fields and missing-context warnings (and can write CI summaries).
+    for (const key of Object.keys(process.env)) delete process.env[key];
     directory = await mkdtemp(join(tmpdir(), "traceoptix-reporter-"));
     process.env.TRACEOPTIX_URL = "https://traceoptix.example";
     process.env.TRACEOPTIX_TOKEN = "super-secret-token";
