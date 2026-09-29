@@ -29,7 +29,15 @@ interface ActiveRun {
   client: TraceOptixClient;
   response: CreateRunResponse;
   reportUpload: ArtifactUpload;
-  junitPath: string;
+  organization?: string;
+  baseUrl: string;
+}
+
+interface FullPublication {
+  client: TraceOptixClient;
+  body: Record<string, unknown>;
+  bundleId: string;
+  testPriorities: ReturnType<typeof prepareTestPriorities>;
   organization?: string;
   baseUrl: string;
 }
@@ -67,7 +75,6 @@ const CONFIGURATION_GUIDE =
 export default class TraceOptixReporter {
   private readonly options: TraceOptixReporterOptions;
   private readonly uploads: Semaphore;
-  private runPromise: Promise<ActiveRun | null> | undefined;
   private modePromise: Promise<PublishMode | null> | undefined;
   private readonly pending = new Set<Promise<void>>();
   private rootDir = process.cwd();
@@ -80,6 +87,7 @@ export default class TraceOptixReporter {
   private bundlePlan: { mode: BundleMode; outputDirectory: string } | undefined;
   private bundleSuppressedReason: string | undefined;
   private summary: SummaryPublication | undefined;
+  private fullPublication: FullPublication | undefined;
 
   constructor(options: TraceOptixReporterOptions = { junitFile: "" }) {
     this.options = options;
@@ -165,8 +173,8 @@ export default class TraceOptixReporter {
       typeof publishSettings === "string"
         ? first(this.options.project, reporterEnv("PROJECT"))
         : publishSettings.project;
-    const createPortableBundle = () => {
-      if (paths.bundleMode === "off" || this.bundle) return;
+    const createPortableBundle = (requiredForLivePublishing = false) => {
+      if ((!requiredForLivePublishing && paths.bundleMode === "off") || this.bundle) return;
       this.bundle = new PortableRunBundle({
         bundleId,
         mode: paths.bundleMode,
@@ -250,46 +258,22 @@ export default class TraceOptixReporter {
           return "summary_only" as const;
         }
 
-        createPortableBundle();
-        const artifactName = basename(paths.junitPath);
-        this.runPromise = client
-          .createRun(
-            removeUndefined({
-              ...commonBody,
-              collectionMode: "full" as const,
-              policyRevision: capability.policyRevision,
-              artifacts: [
-                { filename: artifactName, contentType: "application/xml", format: "junit-xml" },
-              ],
-            }),
-            bundleId,
-          )
-          .then(async (response) => {
-            const reportUpload = response.uploads[0];
-            if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
-            if (testPriorities.length > 0) {
-              try {
-                await client.declareTestPriorities(response, testPriorities);
-              } catch (error) {
-                this.publishFailed = true;
-                this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
-              }
-            }
-            return {
-              client,
-              response,
-              reportUpload,
-              junitPath: paths.junitPath,
-              organization: publishSettings.organization,
-              baseUrl: publishSettings.baseUrl,
-            };
-          })
-          .catch((error: unknown) => {
-            this.publishFailed = true;
-            this.warn(`Could not create the run: ${safeErrorMessage(error)}`);
-            return null;
-          });
-        await this.runPromise;
+        // Full-detail servers require the exact JUnit byte size before issuing a presigned upload
+        // URL. Playwright writes that file only after reporter onEnd hooks, so create the run in
+        // onExit and keep steps/evidence in the same bounded disk stage used by portable bundles.
+        createPortableBundle(true);
+        this.fullPublication = {
+          client,
+          body: removeUndefined({
+            ...commonBody,
+            collectionMode: "full" as const,
+            policyRevision: capability.policyRevision,
+          }),
+          bundleId,
+          testPriorities,
+          organization: publishSettings.organization,
+          baseUrl: publishSettings.baseUrl,
+        };
         return "full" as const;
       })
       .catch((error: unknown) => {
@@ -313,7 +297,7 @@ export default class TraceOptixReporter {
         return;
       }
       if (mode === "full" && (result.attachments.length > 0 || result.steps?.length)) {
-        await this.captureAndPublishTestDetails(test, result);
+        await this.captureTestDetails(test, result);
       }
     })().catch((error: unknown) => {
       this.publishFailed = true;
@@ -335,20 +319,19 @@ export default class TraceOptixReporter {
       this.reportFinalPublicationStatus();
       return;
     }
-    const run = this.runPromise ? await this.runPromise : null;
     const junitPath = this.junitPath;
     if (!junitPath) {
       this.reportFinalPublicationStatus();
       return;
     }
 
-    if (run) {
+    const prepared = this.fullPublication
+      ? await this.createFullRun(junitPath, this.fullPublication)
+      : null;
+    if (prepared) {
+      const { run, report } = prepared;
       try {
-        const metadata = await stat(junitPath);
-        if (!metadata.isFile() || metadata.size === 0) {
-          throw new Error(`JUnit report is missing or empty: ${junitPath}`);
-        }
-        const report = await readFile(junitPath);
+        await this.publishStagedTestDetails(run);
 
         let upload = run.reportUpload;
         if (run.client.isNearExpiry(upload)) {
@@ -375,14 +358,16 @@ export default class TraceOptixReporter {
         this.publishFailed = true;
         this.warn(`Could not publish the JUnit report: ${safeErrorMessage(error)}`);
       }
-    } else {
+    } else if (this.fullPublication) {
       this.publishFailed = true;
     }
 
     let bundleOutputPath: string | undefined;
     let bundleError: string | undefined;
     if (this.bundle) {
-      const retain = this.bundle.mode === "always" || this.publishFailed;
+      const retain =
+        this.bundle.mode === "always" ||
+        (this.bundle.mode === "on-failure" && this.publishFailed);
       try {
         if (retain) {
           const outputPath = await this.bundle.finalize(junitPath);
@@ -469,10 +454,7 @@ export default class TraceOptixReporter {
     }
   }
 
-  private async captureAndPublishTestDetails(
-    test: ReporterTestCase,
-    result: ReporterTestResult,
-  ): Promise<void> {
+  private async captureTestDetails(test: ReporterTestCase, result: ReporterTestResult): Promise<void> {
     const steps = prepareSteps(test, result, this.rootDir, (message) => this.warn(message));
     const attachments = await prepareAttachments(
       test,
@@ -491,44 +473,104 @@ export default class TraceOptixReporter {
           attachments,
         });
       } catch (error) {
-        this.warn(
-          `Could not stage offline details for "${test.title}": ${safeErrorMessage(error)}`,
-        );
+        this.warn(`Could not stage test details for "${test.title}": ${safeErrorMessage(error)}`);
       }
     }
+  }
 
-    const run = this.runPromise ? await this.runPromise : null;
-    if (!run) return;
-    if (steps.batch) {
-      try {
-        await run.client.declareSteps(run.response, steps.batch);
-      } catch (error) {
-        this.publishFailed = true;
-        this.warn(`Could not record steps for "${test.title}": ${safeErrorMessage(error)}`);
-      }
-    }
-    if (attachments.length === 0) return;
-
+  private async createFullRun(
+    junitPath: string,
+    publication: FullPublication,
+  ): Promise<{ run: ActiveRun; report: Buffer } | null> {
+    let report: Buffer;
     try {
-      const declared = await run.client.declareAttachments(
-        run.response,
-        attachments.map((attachment) => attachment.declaration),
-      );
-      if (declared.uploads.length !== attachments.length) {
-        throw new Error(
-          `TraceOptix returned ${declared.uploads.length} of ${attachments.length} evidence upload URLs`,
-        );
+      const metadata = await stat(junitPath);
+      if (!metadata.isFile() || metadata.size === 0) {
+        throw new Error(`JUnit report is missing or empty: ${junitPath}`);
       }
-      await Promise.all(
-        declared.uploads.map((upload, index) => {
-          const attachment = attachments[index];
-          if (!attachment) throw new Error("evidence upload order did not match its declaration");
-          return this.uploads.use(() => run.client.put(upload, attachment.body));
-        }),
-      );
+      report = await readFile(junitPath);
     } catch (error) {
       this.publishFailed = true;
-      this.warn(`Could not publish evidence for "${test.title}": ${safeErrorMessage(error)}`);
+      this.warn(`Could not read the final JUnit report: ${safeErrorMessage(error)}`);
+      return null;
+    }
+
+    try {
+      const response = await publication.client.createRun(
+        {
+          ...publication.body,
+          artifacts: [
+            {
+              filename: basename(junitPath),
+              contentType: "application/xml",
+              bytes: report.byteLength,
+              format: "junit-xml",
+            },
+          ],
+        },
+        publication.bundleId,
+      );
+      const reportUpload = response.uploads[0];
+      if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
+      if (publication.testPriorities.length > 0) {
+        try {
+          await publication.client.declareTestPriorities(response, publication.testPriorities);
+        } catch (error) {
+          this.publishFailed = true;
+          this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
+        }
+      }
+      return {
+        run: {
+          client: publication.client,
+          response,
+          reportUpload,
+          organization: publication.organization,
+          baseUrl: publication.baseUrl,
+        },
+        report,
+      };
+    } catch (error) {
+      this.publishFailed = true;
+      this.warn(`Could not create the run: ${safeErrorMessage(error)}`);
+      return null;
+    }
+  }
+
+  private async publishStagedTestDetails(run: ActiveRun): Promise<void> {
+    if (!this.bundle) return;
+    for await (const attempt of this.bundle.stagedAttempts()) {
+      if (attempt.steps) {
+        try {
+          await run.client.declareSteps(run.response, attempt.steps);
+        } catch (error) {
+          this.publishFailed = true;
+          this.warn(`Could not record steps for "${attempt.test}": ${safeErrorMessage(error)}`);
+        }
+      }
+      if (attempt.attachments.length === 0) continue;
+
+      try {
+        const declared = await run.client.declareAttachments(
+          run.response,
+          attempt.attachments.map((attachment) => attachment.declaration),
+        );
+        if (declared.uploads.length !== attempt.attachments.length) {
+          throw new Error(
+            `TraceOptix returned ${declared.uploads.length} of ${attempt.attachments.length} evidence upload URLs`,
+          );
+        }
+        await Promise.all(
+          declared.uploads.map((upload, index) => {
+            const attachment = attempt.attachments[index];
+            if (!attachment) throw new Error("evidence upload order did not match its declaration");
+            return this.uploads.use(() => run.client.put(upload, attachment.body));
+          }),
+        );
+      } catch (error) {
+        this.publishFailed = true;
+        this.warn(`Could not publish evidence for "${attempt.test}": ${safeErrorMessage(error)}`);
+      }
     }
   }
 
