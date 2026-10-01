@@ -93,7 +93,7 @@ export interface ReporterTestCase {
   title: string;
   tags: string[];
   titlePath(): string[];
-  location: { file: string };
+  location: { file: string; line?: number; column?: number };
 }
 
 export interface ReporterTestResult {

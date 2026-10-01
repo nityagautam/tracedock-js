@@ -1,5 +1,6 @@
+import type { PlannedStep } from "./step-plan.js";
 import { randomUUID } from "node:crypto";
-import { basename, relative } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { junitSuiteName } from "./attachments.js";
 import type {
   ReporterAttachment,
@@ -42,6 +43,7 @@ export function prepareSteps(
   result: ReporterTestResult,
   rootDir: string,
   warn: (message: string) => void,
+  plan: readonly PlannedStep[] = [],
 ): PreparedSteps {
   const declarations: StepDeclaration[] = [];
   const attachmentReferences = new Map<ReporterAttachment, string>();
@@ -74,12 +76,18 @@ export function prepareSteps(
       ...(Number.isFinite(step.duration) && step.duration >= 0
         ? { durationMs: Math.floor(step.duration) }
         : {}),
-      ...(validDate(step.startTime) ? { startedAt: step.startTime.toISOString() } : {}),
+      ...(validDate(step.startTime)
+        ? { startedAt: step.startTime.toISOString() }
+        : {}),
       ...(step.error
         ? {
             error: {
-              ...(step.error.message ? { message: step.error.message.slice(0, 100_000) } : {}),
-              ...(step.error.stack ? { stack: step.error.stack.slice(0, 200_000) } : {}),
+              ...(step.error.message
+                ? { message: step.error.message.slice(0, 100_000) }
+                : {}),
+              ...(step.error.stack
+                ? { stack: step.error.stack.slice(0, 200_000) }
+                : {}),
             },
           }
         : {}),
@@ -87,7 +95,9 @@ export function prepareSteps(
         ? {
             location: {
               file: displayPath(step.location.file, rootDir).slice(0, 2_048),
-              ...(step.location.line && step.location.line > 0 ? { line: step.location.line } : {}),
+              ...(step.location.line && step.location.line > 0
+                ? { line: step.location.line }
+                : {}),
               ...(step.location.column && step.location.column > 0
                 ? { column: step.location.column }
                 : {}),
@@ -115,7 +125,8 @@ export function prepareSteps(
     for (const child of step.steps) visit(child, id);
   };
 
-  for (const step of result.steps ?? []) visit(step);
+  for (const step of completePlannedSteps(test, result.steps ?? [], plan))
+    visit(step);
   if (truncated) {
     warn(
       `Recorded the first ${MAX_STEPS_PER_ATTEMPT} steps for "${test.title}"; the remainder exceeded the safety limit.`,
@@ -150,4 +161,83 @@ function validDate(value: Date): boolean {
 function displayPath(file: string, rootDir: string): string {
   const candidate = relative(rootDir, file);
   return candidate && !candidate.startsWith("..") ? candidate : basename(file);
+}
+
+/** Place unobserved declarations beside their scenario siblings, leaving actual subtrees intact. */
+function completePlannedSteps(
+  test: ReporterTestCase,
+  observed: readonly ReporterTestStep[],
+  plan: readonly PlannedStep[],
+): ReporterTestStep[] {
+  if (!plan.length) return [...observed];
+  const clone = (step: ReporterTestStep): ReporterTestStep => ({
+    ...step,
+    steps: step.steps.map(clone),
+  });
+  const roots = observed.map(clone);
+  const anchors = new Map<
+    number,
+    { step: ReporterTestStep; siblings: ReporterTestStep[] }
+  >();
+  const find = (siblings: ReporterTestStep[]) => {
+    for (const step of siblings) {
+      if (
+        step.category === "test.step" &&
+        step.location?.line &&
+        resolve(step.location.file) === resolve(test.location.file)
+      ) {
+        anchors.set(step.location.line, { step, siblings });
+      }
+      find(step.steps);
+    }
+  };
+  find(roots);
+  for (let i = 0; i < plan.length; i++) {
+    const planned = plan[i]!;
+    if (anchors.has(planned.line)) continue;
+    const step: ReporterTestStep = {
+      title: planned.title,
+      category: "test.step",
+      duration: 0,
+      startTime: new Date(NaN),
+      location: { file: test.location.file, line: planned.line },
+      annotations: [
+        {
+          type: "skip",
+          description: "Declared BDD step was not executed in this attempt.",
+        },
+      ],
+      attachments: [],
+      steps: [],
+    };
+    const next = plan
+      .slice(i + 1)
+      .find((p) => p.background === planned.background && anchors.has(p.line));
+    const previous = plan
+      .slice(0, i)
+      .reverse()
+      .find((p) => p.background === planned.background && anchors.has(p.line));
+    const anchor = next
+      ? anchors.get(next.line)
+      : previous
+        ? anchors.get(previous.line)
+        : undefined;
+    const beforeHooks = roots.find(
+      (s) => s.category === "hook" && s.title === "Before Hooks",
+    );
+    const siblings =
+      anchor?.siblings ??
+      (planned.background && beforeHooks ? beforeHooks.steps : roots);
+    const afterHooks = siblings.findIndex(
+      (s) => s.category === "hook" && s.title === "After Hooks",
+    );
+    const index = anchor
+      ? siblings.indexOf(anchor.step) + (next ? 0 : 1)
+      : afterHooks >= 0
+        ? afterHooks
+        : siblings.length;
+    siblings.splice(index, 0, step);
+    anchors.set(planned.line, { step, siblings });
+  }
+  return roots;
 }

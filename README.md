@@ -2,7 +2,6 @@
 
 Source development lives in the standalone `traceoptix-playwright` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
 
-
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
 files and logs to TraceOptix. Evidence is linked to the testcase, retry and originating step that
 produced it. Publishing is warning-only: a TraceOptix or object-storage outage never changes
@@ -28,7 +27,7 @@ pnpm --filter @traceoptix/playwright test
 mkdir -p /absolute/path/to/playwright-project/scripts/vendor
 npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
 cd /absolute/path/to/playwright-project
-npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.2.tgz
 ```
 
 `npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
@@ -261,14 +260,14 @@ This example shows every reporter option. Supply only the fields your project ne
       outputDir: "test-results/reports/traceoptix-bundles",
     },
   },
-]
+];
 ```
 
-| Option                | Accepted value                                     | Environment fallback                        | Purpose                                                                                                    |
-| --------------------- | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `junitFile`           | File path; required                                | —                                           | Path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
-| `project`             | Project key                                        | `TRACEOPTIX_PROJECT`                         | TraceOptix destination project                                                                              |
-| `url`                 | HTTP or HTTPS URL                                  | `TRACEOPTIX_URL`                             | TraceOptix origin                                                                                           |
+| Option                | Accepted value                                     | Environment fallback                         | Purpose                                                                                                    |
+| --------------------- | -------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `junitFile`           | File path; required                                | —                                            | Path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
+| `project`             | Project key                                        | `TRACEOPTIX_PROJECT`                         | TraceOptix destination project                                                                             |
+| `url`                 | HTTP or HTTPS URL                                  | `TRACEOPTIX_URL`                             | TraceOptix origin                                                                                          |
 | `organization`        | Organization slug                                  | `TRACEOPTIX_ORG`                             | Enables the final browser run URL                                                                          |
 | `name`                | String                                             | `TRACEOPTIX_RUN_NAME`                        | Base run name                                                                                              |
 | `namePattern`         | String containing `{name}` and/or `{timestamp}`    | `TRACEOPTIX_RUN_NAME_PATTERN`                | Run-name format; default `{name}-{timestamp}`                                                              |
@@ -277,12 +276,12 @@ This example shows every reporter option. Supply only the fields your project ne
 | `commitSha`           | String                                             | `TRACEOPTIX_COMMIT_SHA`, then CI metadata    | Source revision                                                                                            |
 | `pullRequest`         | Positive integer                                   | `TRACEOPTIX_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                        |
 | `ci`                  | CI metadata object                                 | `TRACEOPTIX_CI_*`, then detected CI metadata | Build, job, pipeline, actor and trigger context                                                            |
-| `tags`                | `Record<string, string>`                           | `TRACEOPTIX_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                    |
+| `tags`                | `Record<string, string>`                           | `TRACEOPTIX_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                     |
 | `priority.fromTags`   | Boolean; default `true`                            | `TRACEOPTIX_PRIORITY_FROM_TAGS`              | Synchronizes exact `@p0`–`@p3` Playwright tags                                                             |
-| `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                           | Maximum simultaneous evidence uploads                                                                     |
-| `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                           | Project capability lookup timeout                                                                          |
+| `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                            | Maximum simultaneous evidence uploads                                                                      |
+| `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                            | Project capability lookup timeout                                                                          |
 | `bundle.mode`         | `always`, `on-failure`, or `off`; default `always` | `TRACEOPTIX_BUNDLE_MODE`                     | Portable ZIP retention policy                                                                              |
-| `bundle.outputDir`    | Directory path                                     | `TRACEOPTIX_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `traceoptix-bundles` beside `junitFile`                                        |
+| `bundle.outputDir`    | Directory path                                     | `TRACEOPTIX_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `traceoptix-bundles` beside `junitFile`                                       |
 
 The `ci` object accepts `provider`, `buildId`, `buildNumber`, `jobName`, `jobUrl`, `pipelineName`,
 `pipelineUrl`, `actor`, and `triggerEvent`. Valid providers are `github`, `gitlab`, `jenkins`,
@@ -411,6 +410,17 @@ Every Playwright step is recorded automatically from `result.steps`: BDD and `te
 assertions, hooks, fixtures, Playwright API calls and attachment steps. Nested steps retain their
 hierarchy; timing, source location, annotations and step errors are preserved per retry. Evidence
 created inside a step renders with that step in the result panel.
+
+For Playwright-BDD generated scenarios, the reporter also reads the generated file's JSON
+step plan. Declared steps that were never reached appear as **Skipped**, in scenario order,
+after a failure or setup interruption. Background steps and expanded scenario-outline values
+are preserved; retries have independent step statuses. These declarations are included in both
+full-detail publication and portable ZIPs. The reporter does not execute the source file.
+
+This is validated with playwright-bdd 8.4.1. Generated source must remain available through
+reporter completion. Ordinary Playwright tests, missing source, or unsupported metadata fall
+back to observed steps; the reporter cannot infer future dynamic `test.step()` calls. Summary-only
+publication remains aggregate-only and does not read or transmit scenario plans.
 
 The safety ceiling is 5,000 steps per testcase attempt. If a generated or pathological test
 exceeds it, the reporter keeps the first 5,000, prints one warning and continues. This feature is
