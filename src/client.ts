@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { AttachmentDeclaration } from "./attachments.js";
 import type { TestPriorityDeclaration } from "./priorities.js";
 import type { StepBatch } from "./steps.js";
@@ -26,6 +27,7 @@ export interface CreateRunResponse {
   stepsUrl: string;
   testPrioritiesUrl: string;
   completeUrl: string;
+  failureUrl?: string;
 }
 
 export interface CompleteRunResponse {
@@ -42,7 +44,12 @@ export interface PublishCapabilitiesResponse {
   policyRevision: number;
   expiresAt: string;
   summarySchemaVersion: 1;
-  summary: { limit: number; used: number; remaining: number; periodEnd: string } | null;
+  summary: {
+    limit: number;
+    used: number;
+    remaining: number;
+    periodEnd: string;
+  } | null;
   summaryUrl: string;
 }
 
@@ -66,15 +73,29 @@ export class TraceOptixClient {
     // A timed-out response may already have reserved the ID. The stable source identity
     // makes one retry safe, including a development server compiling this route cold.
     try {
-      return await this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
+      return await this.requestJson("/api/v1/executions", {
+        body,
+        signal: AbortSignal.timeout(5_000),
+      });
     } catch (error) {
-      if (error instanceof HttpError && error.status < 500 && error.status !== 429) throw error;
-      return this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
+      if (
+        error instanceof HttpError &&
+        error.status < 500 &&
+        error.status !== 429
+      )
+        throw error;
+      return this.requestJson("/api/v1/executions", {
+        body,
+        signal: AbortSignal.timeout(5_000),
+      });
     }
   }
 
   heartbeatExecution(body: unknown): Promise<{ ok: boolean }> {
-    return this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
+    return this.requestJson("/api/v1/executions", {
+      body,
+      signal: AbortSignal.timeout(5_000),
+    });
   }
 
   createRun(body: unknown, idempotencyKey: string): Promise<CreateRunResponse> {
@@ -93,10 +114,14 @@ export class TraceOptixClient {
       { method: "GET", signal: AbortSignal.timeout(timeoutMs) },
     );
     if (!isPublishCapabilitiesResponse(response)) {
-      throw new Error("TraceOptix returned an unsupported publish-capability response");
+      throw new Error(
+        "TraceOptix returned an unsupported publish-capability response",
+      );
     }
     if (Date.parse(response.expiresAt) <= Date.now()) {
-      throw new Error("TraceOptix returned an expired publish-capability response");
+      throw new Error(
+        "TraceOptix returned an expired publish-capability response",
+      );
     }
     return response;
   }
@@ -118,16 +143,22 @@ export class TraceOptixClient {
   ): Promise<{
     uploads: AttachmentUpload[];
   }> {
-    return this.requestJson<{ uploads: AttachmentUpload[] }>(run.attachmentUrl, {
-      body: { attachments: declarations },
-    });
+    return this.requestJson<{ uploads: AttachmentUpload[] }>(
+      run.attachmentUrl,
+      {
+        body: { attachments: declarations },
+      },
+    );
   }
 
   declareSteps(
     run: CreateRunResponse,
     batch: StepBatch,
   ): Promise<{ declared: number; inserted: number }> {
-    return this.requestJson<{ declared: number; inserted: number }>(run.stepsUrl, { body: batch });
+    return this.requestJson<{ declared: number; inserted: number }>(
+      run.stepsUrl,
+      { body: batch },
+    );
   }
 
   async declareTestPriorities(
@@ -137,26 +168,42 @@ export class TraceOptixClient {
     let declared = 0;
     for (let offset = 0; offset < tests.length; offset += 1_000) {
       const chunk = tests.slice(offset, offset + 1_000);
-      const response = await this.requestJson<{ declared: number }>(run.testPrioritiesUrl, {
-        body: { tests: chunk },
-      });
+      const response = await this.requestJson<{ declared: number }>(
+        run.testPrioritiesUrl,
+        {
+          body: { tests: chunk },
+        },
+      );
       declared += response.declared;
     }
     return declared;
   }
 
-  async refreshArtifact(runId: string, artifactId: string): Promise<ArtifactUpload> {
+  async refreshArtifact(
+    runId: string,
+    artifactId: string,
+  ): Promise<ArtifactUpload> {
     const response = await this.requestJson<{ uploads: ArtifactUpload[] }>(
       `/api/v1/runs/${runId}/artifact-upload-urls`,
       { body: { artifactIds: [artifactId] } },
     );
-    const upload = response.uploads.find((candidate) => candidate.artifactId === artifactId);
+    const upload = response.uploads.find(
+      (candidate) => candidate.artifactId === artifactId,
+    );
     if (!upload) throw new Error("artifact refresh returned no upload URL");
     return upload;
   }
 
   complete(run: CreateRunResponse): Promise<CompleteRunResponse> {
     return this.requestJson<CompleteRunResponse>(run.completeUrl, {});
+  }
+
+  async reportPublicationFailure(
+    run: CreateRunResponse,
+    reason: "rate_limited" | "publication_failed",
+  ): Promise<void> {
+    if (run.failureUrl)
+      await this.requestJson(run.failureUrl, { body: { reason } });
   }
 
   async put(upload: PresignedUpload, body: Buffer): Promise<void> {
@@ -166,7 +213,10 @@ export class TraceOptixClient {
       body,
     });
     if (!response.ok)
-      throw new HttpError(response.status, `object upload returned HTTP ${response.status}`);
+      throw new HttpError(
+        response.status,
+        `object upload returned HTTP ${response.status}`,
+      );
   }
 
   isNearExpiry(upload: PresignedUpload, now = Date.now()): boolean {
@@ -183,21 +233,41 @@ export class TraceOptixClient {
       signal?: AbortSignal;
     },
   ): Promise<Response> {
-    const response = await fetch(this.absoluteUrl(path), {
-      method: request.method ?? "POST",
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        "content-type": "application/json",
-        ...request.headers,
-      },
-      body: request.body === undefined ? undefined : JSON.stringify(request.body),
-      signal: request.signal,
-    });
+    let response: Awaited<ReturnType<typeof fetch>>;
+    for (let attempt = 0; ; attempt++) {
+      response = await fetch(this.absoluteUrl(path), {
+        method: request.method ?? "POST",
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          "content-type": "application/json",
+          ...request.headers,
+        },
+        body:
+          request.body === undefined ? undefined : JSON.stringify(request.body),
+        signal: request.signal,
+      });
+      if (response.status !== 429 || attempt >= 3) break;
+      const header = response.headers.get("retry-after");
+      const seconds = header === null ? NaN : Number(header);
+      const waitMs =
+        Number.isFinite(seconds) && seconds >= 0
+          ? seconds * 1000
+          : header && Number.isFinite(Date.parse(header))
+            ? Math.max(0, Date.parse(header) - Date.now())
+            : 1000 * 2 ** attempt;
+      // Never retry before the server permits it, or hold CI indefinitely.
+      if (waitMs > 120_000) break;
+      await response.body?.cancel();
+      await delay(Math.max(100, waitMs), undefined, { signal: request.signal });
+    }
 
     if (!response.ok) {
       let message = `TraceOptix API returned HTTP ${response.status}`;
       try {
-        const body = (await response.json()) as { error?: { message?: string }; message?: string };
+        const body = (await response.json()) as {
+          error?: { message?: string };
+          message?: string;
+        };
         message = body.error?.message ?? body.message ?? message;
       } catch {
         // A proxy often returns HTML. Status is safer and more useful than logging that body.
@@ -212,13 +282,16 @@ export class TraceOptixClient {
   }
 }
 
-function isPublishCapabilitiesResponse(value: unknown): value is PublishCapabilitiesResponse {
+function isPublishCapabilitiesResponse(
+  value: unknown,
+): value is PublishCapabilitiesResponse {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<PublishCapabilitiesResponse>;
   return (
     candidate.schemaVersion === 1 &&
     candidate.summarySchemaVersion === 1 &&
-    (candidate.collectionMode === "full" || candidate.collectionMode === "summary_only") &&
+    (candidate.collectionMode === "full" ||
+      candidate.collectionMode === "summary_only") &&
     typeof candidate.project === "string" &&
     Number.isSafeInteger(candidate.policyRevision) &&
     typeof candidate.expiresAt === "string" &&

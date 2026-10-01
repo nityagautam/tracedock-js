@@ -501,6 +501,18 @@ export default class TraceOptixReporter {
         this.warn(
           `Could not publish the JUnit report: ${safeErrorMessage(error)}`,
         );
+        try {
+          await run.client.reportPublicationFailure(
+            run.response,
+            error instanceof HttpError && error.status === 429
+              ? "rate_limited"
+              : "publication_failed",
+          );
+        } catch {
+          this.warn(
+            "Could not notify the server of publication failure; the unfinished upload session will expire. Retain the portable ZIP for recovery.",
+          );
+        }
       }
     } else if (this.fullPublication) {
       this.publishFailed = true;

@@ -401,8 +401,18 @@ zero-based retry number.
 - HAR, HTML, JSON, NDJSON, text and Markdown attachments are stored with safe display types.
 - Unknown files are stored as binary evidence.
 
-An evidence failure produces a warning and is reported by TraceOptix as missing evidence. A JUnit
-failure leaves the run pending rather than completing it with partial results.
+Metadata API requests retry HTTP 429 responses up to three times and honor `Retry-After`
+(seconds or an HTTP date). This includes step/evidence declarations and final completion,
+so a large suite can span the server’s rate-limit windows. A requested wait above two minutes
+fails back to the portable bundle instead of holding CI indefinitely. Other HTTP errors retain
+their existing handling.
+
+An evidence failure produces a warning and is reported by TraceOptix as missing evidence. A final JUnit
+publication failure notifies the server through its optional `failureUrl`, making an unaccepted
+upload Failed with a recovery message. Accepted results cannot be overwritten by this notification.
+If notification is unavailable, the updated server expires abandoned Uploading sessions after
+60 minutes without activity; the runtime worker checks each minute. Older servers retain their
+existing behavior. Import the matching retained ZIP to recover the same run ID.
 
 ## Test steps
 
