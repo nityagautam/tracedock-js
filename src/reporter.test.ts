@@ -82,6 +82,7 @@ describe("TraceOptixReporter", () => {
             attachmentUrl: "/api/v1/runs/run-1/attachment-upload-urls",
             stepsUrl: "/api/v1/runs/run-1/steps",
             testPrioritiesUrl: "/api/v1/runs/run-1/test-priorities",
+            testIssuesUrl: "/api/v1/runs/run-1/test-issues",
             completeUrl: "/api/v1/runs/run-1/complete",
           },
           201,
@@ -106,6 +107,9 @@ describe("TraceOptixReporter", () => {
       }
       if (url.endsWith("/steps")) {
         return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
+      }
+      if (url.endsWith("/test-issues")) {
+        return jsonResponse({ declared: 1, inserted: 1, rejected: 0 }, 201);
       }
       if (url.endsWith("/test-priorities")) {
         return jsonResponse({ runId: "run-1", declared: 1, inserted: 1 }, 201);
@@ -136,7 +140,7 @@ describe("TraceOptixReporter", () => {
         join(directory, "test-results", ".features-gen"),
         join(directory, "playwright.config.ts"),
       ),
-      { allTests: () => [testCase(["@p0"]), testCase([], "uses a gift card")] },
+      { allTests: () => [testCase(["@p0", "@jira:PAY-123"]), testCase([], "uses a gift card")] },
     );
     reporter.onTestEnd(testCase(), result());
 
@@ -197,6 +201,13 @@ describe("TraceOptixReporter", () => {
     const declaration = calls.find(({ url }) => url.endsWith("/attachment-upload-urls"));
     const stepDeclaration = calls.find(({ url }) => url.endsWith("/steps"));
     const priorityDeclaration = calls.find(({ url }) => url.endsWith("/test-priorities"));
+    const issueDeclaration = calls.find(({ url }) => url.endsWith("/test-issues"));
+    expect(JSON.parse(String(issueDeclaration?.init.body))).toMatchObject({
+      tests: [{ issues: [{ reference: "PAY-123", provider: "jira" }] }],
+    });
+    expect(calls.indexOf(issueDeclaration!)).toBeLessThan(
+      calls.findIndex(({ url }) => url.endsWith("/complete")),
+    );
     const stepBody = JSON.parse(String(stepDeclaration?.init.body)) as {
       steps: Array<{ id: string; title: string; category: string }>;
     };
@@ -243,6 +254,8 @@ describe("TraceOptixReporter", () => {
     const archive = await readFile(join(bundleDirectory, bundles[0]!));
     const storedText = archive.toString("utf8");
     expect(storedText).toContain("manifest.json");
+    expect(storedText).toContain("testIssues");
+    expect(storedText).toContain("PAY-123");
     expect(storedText).toContain('"schemaVersion":2');
     expect(storedText).toContain('"testCaseCount":2');
     expect(storedText).not.toContain('"schemaVersion": 2');

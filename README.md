@@ -483,3 +483,38 @@ JSON; archive-size subscription allowances remain a separate server-side admissi
 Each Playwright process creates one TraceOptix run. To publish one combined run from multiple
 shards, use Playwright blob reports plus `npx playwright merge-reports`, then run this reporter as
 part of the merge configuration. Automatic cross-process shard merging is not part of `0.2.x`.
+
+### Link tests to tickets from Playwright tags
+
+```ts
+test('payment succeeds', {
+  tag: ['@jira:PAY-123', '@ticket:https://github.com/acme/checkout/issues/42'],
+}, async ({ page }) => {
+  // ...
+});
+```
+
+Use `@issue:KEY` or `@ticket:KEY` with the effective TraceOptix project tracker. Provider-specific
+forms are `@jira:PAY-123`, `@azure:88`, `@azureboards:88`, `@azureboard:88`, `@ado:88`,
+`@github:42` and `@gitlab:42`; `=` may replace `:`. Full HTTP(S) URLs work without a configured
+default through `@ticket:https://…` or `@issue:https://…`. Prefixes are case-insensitive.
+Provider-specific keys require the same provider in the effective tracker configuration.
+Bare tags such as `@PAY-123` are not interpreted as tickets.
+
+Organization defaults and project overrides are configured in TraceOptix under **Tickets & issues**.
+Inherited `test.describe` tags are supported through Playwright's resolved tags. Each canonical
+JUnit identity can declare up to 20 distinct references; retries and Playwright projects are deduplicated.
+Nested describe titles are included in the identity, so same-named tests in different groups stay separate.
+
+Links are added after JUnit ingestion identifies the tests. Existing labels and manually added links
+are preserved. Removing a tag does not unlink a ticket. Ambiguous or missing test identities are left
+unlinked. Resolved URLs are captured when declarations reach TraceOptix; later tracker changes do not
+rewrite accepted links. Invalid references or mismatched providers produce warnings without preventing
+result publishing. Projection summaries record rejected/unmatched counts; successful additions are audited.
+
+Detection is on by default. Set `issues: { fromTags: false }` in the reporter options or
+`TRACEOPTIX_ISSUES_FROM_TAGS=false` to disable it (the explicit option wins). Summary-only runs do not
+retain test identities and cannot apply ticket tags. Report ZIPs retain these declarations for later
+import; old ZIPs without them still work. Requires a TraceOptix server with migration 0060 and the
+`testIssuesUrl` upload capability. Older servers produce an explicit unsupported-feature warning.
+No external tracker credentials or external issue creation are involved.

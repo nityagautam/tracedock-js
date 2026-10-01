@@ -1,3 +1,4 @@
+import type { TestIssueDeclaration } from "./issues.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AttachmentDeclaration } from "./attachments.js";
 import type { TestPriorityDeclaration } from "./priorities.js";
@@ -26,6 +27,7 @@ export interface CreateRunResponse {
   attachmentUrl: string;
   stepsUrl: string;
   testPrioritiesUrl: string;
+  testIssuesUrl?: string;
   completeUrl: string;
   failureUrl?: string;
 }
@@ -159,6 +161,38 @@ export class TraceOptixClient {
       run.stepsUrl,
       { body: batch },
     );
+  }
+
+  async declareTestIssues(
+    run: CreateRunResponse,
+    tests: readonly TestIssueDeclaration[],
+  ): Promise<{ rejected: number }> {
+    if (!run.testIssuesUrl)
+      throw new Error(
+        "Server does not support reporter ticket tags; update TraceOptix before using this feature",
+      );
+    let rejected = 0;
+    let chunk: TestIssueDeclaration[] = [];
+    let bytes = 0;
+    const send = async () => {
+      if (!chunk.length) return;
+      const response = await this.requestJson<{ rejected: number }>(
+        run.testIssuesUrl!,
+        { body: { tests: chunk } },
+      );
+      rejected += response.rejected;
+      chunk = [];
+      bytes = 0;
+    };
+    for (const test of tests) {
+      const size = Buffer.byteLength(JSON.stringify(test), "utf8") + 1;
+      if (chunk.length && (chunk.length >= 100 || bytes + size > 512 * 1024))
+        await send();
+      chunk.push(test);
+      bytes += size;
+    }
+    await send();
+    return { rejected };
   }
 
   async declareTestPriorities(

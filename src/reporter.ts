@@ -1,3 +1,4 @@
+import { prepareTestIssues } from "./issues.js";
 import { BddStepPlans } from "./step-plan.js";
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile, stat } from "node:fs/promises";
@@ -43,6 +44,7 @@ interface FullPublication {
   body: Record<string, unknown>;
   bundleId: string;
   testPriorities: ReturnType<typeof prepareTestPriorities>;
+  testIssues: ReturnType<typeof prepareTestIssues>;
   organization?: string;
   baseUrl: string;
 }
@@ -145,6 +147,15 @@ export default class TraceOptixReporter {
         )
       : [];
 
+    const testIssues = priorityTagsEnabled(
+      this.options.issues?.fromTags,
+      reporterEnv("ISSUES_FROM_TAGS"),
+    )
+      ? prepareTestIssues(allTests, this.rootDir, (message) =>
+          this.warn(message),
+        )
+      : [];
+
     const detected = detectMetadata(process.env);
     const startedAt = new Date();
     const branch =
@@ -231,6 +242,7 @@ export default class TraceOptixReporter {
           tags: runTags,
         }),
         testPriorities,
+        testIssues,
       });
     };
     if (typeof publishSettings === "string") {
@@ -303,6 +315,10 @@ export default class TraceOptixReporter {
           }
         }
         if (capability.collectionMode === "summary_only") {
+          if (testIssues.length)
+            this.warn(
+              "Ticket tags are not applied in Summary-only mode because it does not retain individual test identities.",
+            );
           if (!capability.summary || capability.summary.remaining <= 0) {
             throw new Error(
               "Summary-only publishing is unavailable or its allowance is exhausted",
@@ -343,6 +359,7 @@ export default class TraceOptixReporter {
           }),
           bundleId,
           testPriorities,
+          testIssues,
           organization: publishSettings.organization,
           baseUrl: publishSettings.baseUrl,
         };
@@ -708,6 +725,23 @@ export default class TraceOptixReporter {
       const reportUpload = response.uploads[0];
       if (!reportUpload)
         throw new Error("run creation returned no JUnit upload URL");
+      if (publication.testIssues.length > 0) {
+        try {
+          const outcome = await publication.client.declareTestIssues(
+            response,
+            publication.testIssues,
+          );
+          if (outcome.rejected)
+            this.warn(
+              `${outcome.rejected} ticket references could not be resolved. Check the project's default tracker and tag provider; full ticket URLs work without a default.`,
+            );
+        } catch (error) {
+          this.publishFailed = true;
+          this.warn(
+            `Could not publish testcase ticket links: ${safeErrorMessage(error)}`,
+          );
+        }
+      }
       if (publication.testPriorities.length > 0) {
         try {
           await publication.client.declareTestPriorities(
