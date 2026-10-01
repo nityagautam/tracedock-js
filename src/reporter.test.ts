@@ -48,6 +48,7 @@ describe("TraceOptixReporter", () => {
       if (url.endsWith("/api/v1/projects/checkout-web/publish-capabilities")) {
         return jsonResponse({
           schemaVersion: 1,
+          executionPresenceVersion: 1,
           project: "checkout-web",
           collectionMode: "full",
           policyRevision: 1,
@@ -58,6 +59,12 @@ describe("TraceOptixReporter", () => {
         });
       }
 
+      if (url.endsWith("/api/v1/executions")) {
+        const body = JSON.parse(String(init.body));
+        return jsonResponse(body.operation === "start"
+          ? { runId: "01a0f5bf-e74d-7772-9ef4-0ae39eddb1a9" }
+          : { ok: true });
+      }
       if (url === "https://traceoptix.example/api/v1/runs") {
         return jsonResponse(
           {
@@ -138,6 +145,7 @@ describe("TraceOptixReporter", () => {
         calls.some(({ url }) => url.endsWith("/publish-capabilities")),
       ).toBe(true),
     );
+    await vi.waitFor(() => expect(calls.some(({ url }) => url.endsWith("/api/v1/executions"))).toBe(true));
     expect(calls.some(({ url }) => url.endsWith("/api/v1/runs"))).toBe(false);
 
     await mkdir(join(directory, "reports"), { recursive: true });
@@ -154,6 +162,11 @@ describe("TraceOptixReporter", () => {
     expect(createBody).toEqual(
       expect.objectContaining({ project: "checkout-web", framework: "playwright" }),
     );
+    const presenceCalls = calls.filter(({ url }) => url.endsWith("/api/v1/executions"))
+      .map(({ init }) => JSON.parse(String(init.body)));
+    expect(presenceCalls[0]).toMatchObject({ operation: "start", planned: 2,
+      sourceBundleId: createBody.sourceBundleId, collectionMode: "full" });
+    expect(presenceCalls.at(-1)).toMatchObject({ operation: "heartbeat", completed: 1, phase: "uploading" });
     expect(createBody.artifacts).toEqual([
       {
         filename: "junit.xml",
@@ -322,7 +335,7 @@ describe("TraceOptixReporter", () => {
     expect(stdout.mock.calls.flat().join("")).toContain(`output directory: ${bundleDirectory}`);
   });
 
-  it("publishes only aggregate counts when the project is Summary-only", async () => {
+  it.each([false, true])("publishes only aggregates in Summary-only mode (presence=%s)", async (presence) => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     vi.stubGlobal(
       "fetch",
@@ -332,6 +345,7 @@ describe("TraceOptixReporter", () => {
         if (url.endsWith("/publish-capabilities")) {
           return jsonResponse({
             schemaVersion: 1,
+            ...(presence ? { executionPresenceVersion: 1 } : {}),
             project: "checkout-web",
             collectionMode: "summary_only",
             policyRevision: 3,
@@ -345,6 +359,11 @@ describe("TraceOptixReporter", () => {
             },
             summaryUrl: "/api/v1/runs/summary",
           });
+        }
+        if (presence && url.endsWith("/api/v1/executions")) {
+          const body = JSON.parse(String(init.body));
+          return jsonResponse(body.operation === "start"
+            ? { runId: "01a0f5bf-e74d-7772-9ef4-0ae39eddb1a9" } : { ok: true });
         }
         if (url.endsWith("/api/v1/runs/summary")) {
           return jsonResponse(
@@ -376,10 +395,17 @@ describe("TraceOptixReporter", () => {
     });
     await reporter.onExit();
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(presence ? 4 : 2);
     expect(calls.some(({ url }) => url.endsWith("/api/v1/runs"))).toBe(false);
     expect(calls.some(({ url }) => url.startsWith("https://storage.example"))).toBe(false);
-    const body = JSON.parse(String(calls[1]?.init.body)) as Record<string, unknown>;
+    const body = JSON.parse(String(calls.find(call => call.url.endsWith("/api/v1/runs/summary"))?.init.body)) as Record<string, unknown>;
+    if (presence) {
+      const entries = calls.filter(call => call.url.endsWith("/api/v1/executions"))
+        .map(call => JSON.parse(String(call.init.body)));
+      expect(entries[0]).toMatchObject({operation:"start",collectionMode:"summary_only"});
+      expect(entries[1]).toMatchObject({operation:"heartbeat",completed:1,phase:"uploading"});
+      expect(JSON.stringify(entries)).not.toContain("secret");
+    }
     expect(body).toMatchObject({
       project: "checkout-web",
       policyRevision: 3,
@@ -391,7 +417,7 @@ describe("TraceOptixReporter", () => {
       blocked: 0,
       flaky: 1,
     });
-    expect(String(calls[1]?.init.body)).not.toContain("secret");
+    expect(String(calls.find(call => call.url.endsWith("/api/v1/runs/summary"))?.init.body)).not.toContain("secret");
     expect(stdout.mock.calls.flat().join(" ")).toContain("Published Summary-only run");
     await expect(readdir(join(directory, "reports", "traceoptix-bundles"))).rejects.toThrow();
   });

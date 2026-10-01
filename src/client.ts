@@ -36,6 +36,7 @@ export interface CompleteRunResponse {
 
 export interface PublishCapabilitiesResponse {
   schemaVersion: 1;
+  executionPresenceVersion?: 1;
   project: string;
   collectionMode: "full" | "summary_only";
   policyRevision: number;
@@ -59,6 +60,21 @@ export class TraceOptixClient {
     private readonly token: string,
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+  }
+
+  async registerExecution(body: unknown): Promise<{ runId: string }> {
+    // A timed-out response may already have reserved the ID. The stable source identity
+    // makes one retry safe, including a development server compiling this route cold.
+    try {
+      return await this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
+    } catch (error) {
+      if (error instanceof HttpError && error.status < 500 && error.status !== 429) throw error;
+      return this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
+    }
+  }
+
+  heartbeatExecution(body: unknown): Promise<{ ok: boolean }> {
+    return this.requestJson("/api/v1/executions", { body, signal: AbortSignal.timeout(5_000) });
   }
 
   createRun(body: unknown, idempotencyKey: string): Promise<CreateRunResponse> {

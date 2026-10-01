@@ -88,6 +88,12 @@ export default class TraceOptixReporter {
   private bundleSuppressedReason: string | undefined;
   private summary: SummaryPublication | undefined;
   private fullPublication: FullPublication | undefined;
+  private presence: { client: TraceOptixClient; project: string; id: string } | undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private heartbeatPending: Promise<void> | undefined;
+  private presencePhase: "running" | "uploading" = "running";
+  private readonly finishedTests = new Set<string>();
+  private heartbeatWarned = false;
 
   constructor(options: TraceOptixReporterOptions = { junitFile: "" }) {
     this.options = options;
@@ -232,6 +238,22 @@ export default class TraceOptixReporter {
         boundedInteger(this.options.capabilityTimeoutMs, 500, 30_000, 5_000),
       )
       .then(async (capability: PublishCapabilitiesResponse) => {
+        if (capability.executionPresenceVersion === 1) {
+          try {
+            const { runId } = await client.registerExecution({
+              operation: "start", project: publishSettings.project, sourceBundleId: bundleId,
+              name: runName, branch, startedAt: startedAt.toISOString(), planned: allTests.length,
+              collectionMode: capability.collectionMode, policyRevision: capability.policyRevision,
+            });
+            if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new Error("invalid execution identity");
+            this.presence = { client, project: publishSettings.project, id: runId };
+            this.heartbeatTimer = setInterval(() => { void this.sendHeartbeat(); }, 15_000);
+            this.heartbeatTimer.unref();
+            this.output(`Run started: ${runId}`);
+          } catch (error) {
+            this.warn(`Could not register live execution: ${safeErrorMessage(error)}`);
+          }
+        }
         if (capability.collectionMode === "summary_only") {
           if (!capability.summary || capability.summary.remaining <= 0) {
             throw new Error("Summary-only publishing is unavailable or its allowance is exhausted");
@@ -289,6 +311,7 @@ export default class TraceOptixReporter {
   }
 
   onTestEnd(test: ReporterTestCase, result: ReporterTestResult): void {
+    this.finishedTests.add(test.id ?? `${test.location.file}\0${test.titlePath().join("\0")}`);
     if (!this.modePromise && !this.bundle) return;
     const task = (async () => {
       const mode = this.modePromise ? await this.modePromise : "full";
@@ -311,7 +334,35 @@ export default class TraceOptixReporter {
    * Playwright invokes this after every reporter's onEnd has completed. That ordering is what
    * makes it safe to consume the built-in JUnit reporter's file, including any later enrichment.
    */
+  private sendHeartbeat(): Promise<void> {
+    if (this.heartbeatPending) return this.heartbeatPending;
+    if (!this.presence) return Promise.resolve();
+    const { client, project, id } = this.presence;
+    this.heartbeatPending = client.heartbeatExecution({ operation: "heartbeat", project, id,
+      completed: this.finishedTests.size, phase: this.presencePhase,
+    }).then(() => {}).catch(error => {
+      if (!this.heartbeatWarned) {
+        this.heartbeatWarned = true;
+        this.warn(`Live execution heartbeat unavailable: ${safeErrorMessage(error)}`);
+      }
+    }).finally(() => { this.heartbeatPending = undefined; });
+    return this.heartbeatPending;
+  }
+
   async onExit(): Promise<void> {
+    try {
+      await this.modePromise;
+      this.presencePhase = "uploading";
+      await this.heartbeatPending;
+      await this.sendHeartbeat();
+      await this.finalizePublication();
+    } finally {
+      clearInterval(this.heartbeatTimer);
+      await this.heartbeatPending;
+    }
+  }
+
+  private async finalizePublication(): Promise<void> {
     await Promise.allSettled([...this.pending]);
     const mode = this.modePromise ? await this.modePromise : this.bundle ? "full" : null;
     if (mode === "summary_only") {

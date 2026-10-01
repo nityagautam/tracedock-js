@@ -128,6 +128,17 @@ means there is no trace to upload. Whether defaults are written manually or appl
 they must be resolved while Playwright builds its configuration—the reporter callback itself is too
 late to change what Playwright records.
 
+On servers advertising execution presence v1, the reporter registers a **Running** execution at
+startup, before the JUnit file exists. It sends aggregate progress heartbeats every 15 seconds,
+then switches to **Uploading** during final publication. The run list and execution page refresh
+automatically; a missing heartbeat for two minutes displays **Interrupted**. Retry attempts count
+once per test identity. No individual test names, logs or evidence are sent by the presence API.
+
+The initial ID is retained by final Full/Summary-only publication or later ZIP recovery. Startup
+uses a five-second timeout with one idempotent retry; heartbeat failures only warn. Servers without
+the capability keep the existing final-only flow, and `--list` does not create a run. Existing
+installations need to install this updated reporter build to enable early visibility.
+
 The TraceOptix reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
 JUnit reporter; TraceOptix receives the final version. Full-detail publication also starts there so
