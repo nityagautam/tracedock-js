@@ -1,6 +1,6 @@
 {
   "name": "@traceoptix/playwright",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Playwright reporter for publishing Playwright test results and test evidence to TraceOptix",
   "homepage": "https://github.com/nityagautam/traceoptix-playwright#readme",
   "bugs": {

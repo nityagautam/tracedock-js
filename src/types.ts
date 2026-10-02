@@ -48,6 +48,8 @@ export interface TraceOptixReporterOptions {
   tags?: Record<string, string>;
   /** Detect @p0–@p3 Playwright tags and synchronize testcase priority. Defaults to true. */
   priority?: { fromTags?: boolean };
+  /** Detect explicit ticket/issue tags. Defaults to true; links are additive. */
+  issues?: { fromTags?: boolean };
   /** Maximum simultaneous object-store PUTs. Defaults to 3. */
   uploadConcurrency?: number;
   /** Project capability lookup timeout in milliseconds. Defaults to 5,000. */
@@ -93,7 +95,7 @@ export interface ReporterTestCase {
   title: string;
   tags: string[];
   titlePath(): string[];
-  location: { file: string };
+  location: { file: string; line?: number; column?: number };
 }
 
 export interface ReporterTestResult {

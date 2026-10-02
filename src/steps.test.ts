@@ -10,7 +10,13 @@ import type {
 const test: ReporterTestCase = {
   title: "checks out",
   tags: [],
-  titlePath: () => ["", "chromium", "specs/checkout.spec.ts", "Checkout", "checks out"],
+  titlePath: () => [
+    "",
+    "chromium",
+    "specs/checkout.spec.ts",
+    "Checkout",
+    "checks out",
+  ],
   location: { file: "/repo/specs/checkout.spec.ts" },
 };
 
@@ -47,8 +53,16 @@ describe("Playwright step preparation", () => {
     ).toEqual([
       { title: "Before Hooks", category: "hook", parentId: null },
       { title: "When the buyer pays", category: "test.step", parentId: null },
-      { title: "Then the order is confirmed", category: "test.step", parentId: "child" },
-      { title: "expect(receipt).toBeVisible()", category: "expect", parentId: null },
+      {
+        title: "Then the order is confirmed",
+        category: "test.step",
+        parentId: "child",
+      },
+      {
+        title: "expect(receipt).toBeVisible()",
+        category: "expect",
+        parentId: null,
+      },
       { title: "page.click", category: "pw:api", parentId: null },
     ]);
     const failed = prepared.batch?.steps[2];
@@ -78,3 +92,115 @@ function step(
     ...overrides,
   };
 }
+
+it("retains failed subtrees and evidence, inserts skipped declared steps before teardown, and isolates retries", () => {
+  const attachment: ReporterAttachment = {
+    name: "error",
+    contentType: "text/plain",
+    body: Buffer.from("details"),
+  };
+  const first = step("Given ready", "test.step", {
+    location: { file: test.location.file, line: 9 },
+  });
+  const failed = step("When pay", "test.step", {
+    location: { file: test.location.file, line: 10 },
+    error: { message: "declined" },
+    steps: [step("request", "pw:api", { attachments: [attachment] })],
+  });
+  const plan = [
+    { line: 9, title: "Given ready", background: false },
+    { line: 10, title: "When pay", background: false },
+    { line: 11, title: "Then receipt", background: false },
+    { line: 12, title: "And email", background: false },
+  ];
+  const observed = [
+    step("Before Hooks", "hook"),
+    first,
+    failed,
+    step("After Hooks", "hook"),
+  ];
+  const result = {
+    retry: 0,
+    status: "failed" as const,
+    attachments: [attachment],
+    steps: observed,
+  };
+  const prepared = prepareSteps(test, result, "/repo", vi.fn(), plan);
+  const steps = prepared.batch!.steps;
+  expect(steps.map((s) => [s.title, s.status])).toEqual([
+    ["Before Hooks", "passed"],
+    ["Given ready", "passed"],
+    ["When pay", "failed"],
+    ["request", "passed"],
+    ["Then receipt", "skipped"],
+    ["And email", "skipped"],
+    ["After Hooks", "passed"],
+  ]);
+  expect(prepared.stepIdForAttachment(attachment)).toBe(steps[3]!.id);
+  expect(steps[3]!.parentId).toBe(steps[2]!.id);
+  expect(steps[4]).not.toHaveProperty("startedAt");
+  expect(steps[4]).not.toHaveProperty("error");
+  expect(steps.map((s) => s.ordinal)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  expect(result.steps).toHaveLength(4);
+  const retry = prepareSteps(
+    test,
+    {
+      retry: 1,
+      status: "passed",
+      attachments: [],
+      steps: plan.map((p) =>
+        step(p.title, "test.step", {
+          location: { file: test.location.file, line: p.line },
+        }),
+      ),
+    },
+    "/repo",
+    vi.fn(),
+    plan,
+  );
+  expect(retry.batch?.steps.every((s) => s.status === "passed")).toBe(true);
+});
+
+it("handles duplicate titles by location and marks unexecuted background steps skipped", () => {
+  const plan = [
+    { line: 3, title: "Given same", background: true },
+    { line: 4, title: "Given same", background: true },
+    { line: 9, title: "Then same", background: false },
+  ];
+  const result: ReporterTestResult = {
+    retry: 0,
+    status: "failed",
+    attachments: [],
+    steps: [
+      step("Before Hooks", "hook", {
+        error: { message: "setup failed" },
+        steps: [
+          step("Given same", "test.step", {
+            location: { file: test.location.file, line: 3 },
+            error: { message: "setup failed" },
+          }),
+        ],
+      }),
+      step("After Hooks", "hook"),
+    ],
+  };
+  const prepared = prepareSteps(test, result, "/repo", vi.fn(), plan).batch!
+    .steps;
+  expect(prepared.map((s) => [s.title, s.status])).toEqual([
+    ["Before Hooks", "failed"],
+    ["Given same", "failed"],
+    ["Given same", "skipped"],
+    ["Then same", "skipped"],
+    ["After Hooks", "passed"],
+  ]);
+  expect(prepared[2]!.parentId).toBe(prepared[0]!.id);
+  const skipped = prepareSteps(
+    test,
+    { retry: 0, status: "skipped", attachments: [], steps: [] },
+    "/repo",
+    vi.fn(),
+    plan,
+  );
+  expect(skipped.batch?.steps).toHaveLength(3);
+  expect(skipped.batch?.steps.every((s) => s.status === "skipped")).toBe(true);
+});

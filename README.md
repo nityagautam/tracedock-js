@@ -2,7 +2,6 @@
 
 Source development lives in the standalone `traceoptix-playwright` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
 
-
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
 files and logs to TraceOptix. Evidence is linked to the testcase, retry and originating step that
 produced it. Publishing is warning-only: a TraceOptix or object-storage outage never changes
@@ -28,7 +27,7 @@ pnpm --filter @traceoptix/playwright test
 mkdir -p /absolute/path/to/playwright-project/scripts/vendor
 npm pack ./src/packages/playwright-reporter-plugin --pack-destination /absolute/path/to/playwright-project/scripts/vendor
 cd /absolute/path/to/playwright-project
-npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.1.tgz
+npm install --save-dev ./scripts/vendor/traceoptix-playwright-1.0.2.tgz
 ```
 
 `npm pack` also runs the package's `prepack` build, preventing a stale `dist` directory from being
@@ -127,6 +126,17 @@ Playwright produces under those policies; for example, `trace: "off"` remains va
 means there is no trace to upload. Whether defaults are written manually or applied by the helper,
 they must be resolved while Playwright builds its configuration—the reporter callback itself is too
 late to change what Playwright records.
+
+On servers advertising execution presence v1, the reporter registers a **Running** execution at
+startup, before the JUnit file exists. It sends aggregate progress heartbeats every 15 seconds,
+then switches to **Uploading** during final publication. The run list and execution page refresh
+automatically; a missing heartbeat for two minutes displays **Interrupted**. Retry attempts count
+once per test identity. No individual test names, logs or evidence are sent by the presence API.
+
+The initial ID is retained by final Full/Summary-only publication or later ZIP recovery. Startup
+uses a five-second timeout with one idempotent retry; heartbeat failures only warn. Servers without
+the capability keep the existing final-only flow, and `--list` does not create a run. Existing
+installations need to install this updated reporter build to enable early visibility.
 
 The TraceOptix reporter reads the JUnit file in Playwright's `onExit` hook, after every reporter
 has finished `onEnd`. If another reporter enriches the JUnit file, it may remain after the built-in
@@ -250,14 +260,14 @@ This example shows every reporter option. Supply only the fields your project ne
       outputDir: "test-results/reports/traceoptix-bundles",
     },
   },
-]
+];
 ```
 
-| Option                | Accepted value                                     | Environment fallback                        | Purpose                                                                                                    |
-| --------------------- | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `junitFile`           | File path; required                                | —                                           | Path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
-| `project`             | Project key                                        | `TRACEOPTIX_PROJECT`                         | TraceOptix destination project                                                                              |
-| `url`                 | HTTP or HTTPS URL                                  | `TRACEOPTIX_URL`                             | TraceOptix origin                                                                                           |
+| Option                | Accepted value                                     | Environment fallback                         | Purpose                                                                                                    |
+| --------------------- | -------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `junitFile`           | File path; required                                | —                                            | Path also used by Playwright's JUnit reporter; relative paths resolve from the Playwright config directory |
+| `project`             | Project key                                        | `TRACEOPTIX_PROJECT`                         | TraceOptix destination project                                                                             |
+| `url`                 | HTTP or HTTPS URL                                  | `TRACEOPTIX_URL`                             | TraceOptix origin                                                                                          |
 | `organization`        | Organization slug                                  | `TRACEOPTIX_ORG`                             | Enables the final browser run URL                                                                          |
 | `name`                | String                                             | `TRACEOPTIX_RUN_NAME`                        | Base run name                                                                                              |
 | `namePattern`         | String containing `{name}` and/or `{timestamp}`    | `TRACEOPTIX_RUN_NAME_PATTERN`                | Run-name format; default `{name}-{timestamp}`                                                              |
@@ -266,12 +276,12 @@ This example shows every reporter option. Supply only the fields your project ne
 | `commitSha`           | String                                             | `TRACEOPTIX_COMMIT_SHA`, then CI metadata    | Source revision                                                                                            |
 | `pullRequest`         | Positive integer                                   | `TRACEOPTIX_PULL_REQUEST`, then CI metadata  | Pull-request number                                                                                        |
 | `ci`                  | CI metadata object                                 | `TRACEOPTIX_CI_*`, then detected CI metadata | Build, job, pipeline, actor and trigger context                                                            |
-| `tags`                | `Record<string, string>`                           | `TRACEOPTIX_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                    |
+| `tags`                | `Record<string, string>`                           | `TRACEOPTIX_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                     |
 | `priority.fromTags`   | Boolean; default `true`                            | `TRACEOPTIX_PRIORITY_FROM_TAGS`              | Synchronizes exact `@p0`–`@p3` Playwright tags                                                             |
-| `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                           | Maximum simultaneous evidence uploads                                                                     |
-| `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                           | Project capability lookup timeout                                                                          |
+| `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                            | Maximum simultaneous evidence uploads                                                                      |
+| `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                            | Project capability lookup timeout                                                                          |
 | `bundle.mode`         | `always`, `on-failure`, or `off`; default `always` | `TRACEOPTIX_BUNDLE_MODE`                     | Portable ZIP retention policy                                                                              |
-| `bundle.outputDir`    | Directory path                                     | `TRACEOPTIX_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `traceoptix-bundles` beside `junitFile`                                        |
+| `bundle.outputDir`    | Directory path                                     | `TRACEOPTIX_BUNDLE_OUTPUT_DIR`               | ZIP destination; defaults to `traceoptix-bundles` beside `junitFile`                                       |
 
 The `ci` object accepts `provider`, `buildId`, `buildNumber`, `jobName`, `jobUrl`, `pipelineName`,
 `pipelineUrl`, `actor`, and `triggerEvent`. Valid providers are `github`, `gitlab`, `jenkins`,
@@ -391,8 +401,18 @@ zero-based retry number.
 - HAR, HTML, JSON, NDJSON, text and Markdown attachments are stored with safe display types.
 - Unknown files are stored as binary evidence.
 
-An evidence failure produces a warning and is reported by TraceOptix as missing evidence. A JUnit
-failure leaves the run pending rather than completing it with partial results.
+Metadata API requests retry HTTP 429 responses up to three times and honor `Retry-After`
+(seconds or an HTTP date). This includes step/evidence declarations and final completion,
+so a large suite can span the server’s rate-limit windows. A requested wait above two minutes
+fails back to the portable bundle instead of holding CI indefinitely. Other HTTP errors retain
+their existing handling.
+
+An evidence failure produces a warning and is reported by TraceOptix as missing evidence. A final JUnit
+publication failure notifies the server through its optional `failureUrl`, making an unaccepted
+upload Failed with a recovery message. Accepted results cannot be overwritten by this notification.
+If notification is unavailable, the updated server expires abandoned Uploading sessions after
+60 minutes without activity; the runtime worker checks each minute. Older servers retain their
+existing behavior. Import the matching retained ZIP to recover the same run ID.
 
 ## Test steps
 
@@ -400,6 +420,17 @@ Every Playwright step is recorded automatically from `result.steps`: BDD and `te
 assertions, hooks, fixtures, Playwright API calls and attachment steps. Nested steps retain their
 hierarchy; timing, source location, annotations and step errors are preserved per retry. Evidence
 created inside a step renders with that step in the result panel.
+
+For Playwright-BDD generated scenarios, the reporter also reads the generated file's JSON
+step plan. Declared steps that were never reached appear as **Skipped**, in scenario order,
+after a failure or setup interruption. Background steps and expanded scenario-outline values
+are preserved; retries have independent step statuses. These declarations are included in both
+full-detail publication and portable ZIPs. The reporter does not execute the source file.
+
+This is validated with playwright-bdd 8.4.1. Generated source must remain available through
+reporter completion. Ordinary Playwright tests, missing source, or unsupported metadata fall
+back to observed steps; the reporter cannot infer future dynamic `test.step()` calls. Summary-only
+publication remains aggregate-only and does not read or transmit scenario plans.
 
 The safety ceiling is 5,000 steps per testcase attempt. If a generated or pathological test
 exceeds it, the reporter keeps the first 5,000, prints one warning and continues. This feature is
@@ -452,3 +483,38 @@ JSON; archive-size subscription allowances remain a separate server-side admissi
 Each Playwright process creates one TraceOptix run. To publish one combined run from multiple
 shards, use Playwright blob reports plus `npx playwright merge-reports`, then run this reporter as
 part of the merge configuration. Automatic cross-process shard merging is not part of `0.2.x`.
+
+### Link tests to tickets from Playwright tags
+
+```ts
+test('payment succeeds', {
+  tag: ['@jira:PAY-123', '@ticket:https://github.com/acme/checkout/issues/42'],
+}, async ({ page }) => {
+  // ...
+});
+```
+
+Use `@issue:KEY` or `@ticket:KEY` with the effective TraceOptix project tracker. Provider-specific
+forms are `@jira:PAY-123`, `@azure:88`, `@azureboards:88`, `@azureboard:88`, `@ado:88`,
+`@github:42` and `@gitlab:42`; `=` may replace `:`. Full HTTP(S) URLs work without a configured
+default through `@ticket:https://…` or `@issue:https://…`. Prefixes are case-insensitive.
+Provider-specific keys require the same provider in the effective tracker configuration.
+Bare tags such as `@PAY-123` are not interpreted as tickets.
+
+Organization defaults and project overrides are configured in TraceOptix under **Tickets & issues**.
+Inherited `test.describe` tags are supported through Playwright's resolved tags. Each canonical
+JUnit identity can declare up to 20 distinct references; retries and Playwright projects are deduplicated.
+Nested describe titles are included in the identity, so same-named tests in different groups stay separate.
+
+Links are added after JUnit ingestion identifies the tests. Existing labels and manually added links
+are preserved. Removing a tag does not unlink a ticket. Ambiguous or missing test identities are left
+unlinked. Resolved URLs are captured when declarations reach TraceOptix; later tracker changes do not
+rewrite accepted links. Invalid references or mismatched providers produce warnings without preventing
+result publishing. Projection summaries record rejected/unmatched counts; successful additions are audited.
+
+Detection is on by default. Set `issues: { fromTags: false }` in the reporter options or
+`TRACEOPTIX_ISSUES_FROM_TAGS=false` to disable it (the explicit option wins). Summary-only runs do not
+retain test identities and cannot apply ticket tags. Report ZIPs retain these declarations for later
+import; old ZIPs without them still work. Requires a TraceOptix server with migration 0060 and the
+`testIssuesUrl` upload capability. Older servers produce an explicit unsupported-feature warning.
+No external tracker credentials or external issue creation are involved.

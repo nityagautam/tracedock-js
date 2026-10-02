@@ -1,8 +1,14 @@
+import { prepareTestIssues } from "./issues.js";
+import { BddStepPlans } from "./step-plan.js";
 import { randomUUID } from "node:crypto";
 import { appendFile, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { prepareAttachments, safeErrorMessage } from "./attachments.js";
-import { PortableRunBundle, resolveBundleMode, type BundleMode } from "./bundle.js";
+import {
+  PortableRunBundle,
+  resolveBundleMode,
+  type BundleMode,
+} from "./bundle.js";
 import {
   HttpError,
   Semaphore,
@@ -38,6 +44,7 @@ interface FullPublication {
   body: Record<string, unknown>;
   bundleId: string;
   testPriorities: ReturnType<typeof prepareTestPriorities>;
+  testIssues: ReturnType<typeof prepareTestIssues>;
   organization?: string;
   baseUrl: string;
 }
@@ -66,7 +73,10 @@ interface SummaryPublication {
   organization?: string;
   startedAt: Date;
   body: Record<string, unknown>;
-  outcomes: Map<string, { status: "passed" | "failed" | "skipped" | "errored"; flaky: boolean }>;
+  outcomes: Map<
+    string,
+    { status: "passed" | "failed" | "skipped" | "errored"; flaky: boolean }
+  >;
 }
 
 const CONFIGURATION_GUIDE =
@@ -77,17 +87,26 @@ export default class TraceOptixReporter {
   private readonly uploads: Semaphore;
   private modePromise: Promise<PublishMode | null> | undefined;
   private readonly pending = new Set<Promise<void>>();
+  private readonly stepPlans = new BddStepPlans();
   private rootDir = process.cwd();
   private junitPath: string | undefined;
   private bundle: PortableRunBundle | undefined;
   private publishFailed = false;
   private publicationSucceeded = false;
   private reportingAttempted = false;
-  private publishTarget: { baseUrl: string; source: PublishSettings["baseUrlSource"] } | undefined;
+  private publishTarget:
+    { baseUrl: string; source: PublishSettings["baseUrlSource"] } | undefined;
   private bundlePlan: { mode: BundleMode; outputDirectory: string } | undefined;
   private bundleSuppressedReason: string | undefined;
   private summary: SummaryPublication | undefined;
   private fullPublication: FullPublication | undefined;
+  private presence:
+    { client: TraceOptixClient; project: string; id: string } | undefined;
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private heartbeatPending: Promise<void> | undefined;
+  private presencePhase: "running" | "uploading" = "running";
+  private readonly finishedTests = new Set<string>();
+  private heartbeatWarned = false;
 
   constructor(options: TraceOptixReporterOptions = { junitFile: "" }) {
     this.options = options;
@@ -104,7 +123,8 @@ export default class TraceOptixReporter {
   onBegin(config: ReporterFullConfig, suite: ReporterSuite): void {
     // `playwright test --list` initializes reporters but executes nothing. It must remain a
     // read-only discovery command rather than leaving an empty pending run behind.
-    if (config.argv?.includes("--list") || process.argv.includes("--list")) return;
+    if (config.argv?.includes("--list") || process.argv.includes("--list"))
+      return;
     this.reportingAttempted = true;
     this.rootDir = config.rootDir;
     const paths = this.resolvePaths(config);
@@ -122,13 +142,26 @@ export default class TraceOptixReporter {
       this.options.priority?.fromTags,
       reporterEnv("PRIORITY_FROM_TAGS"),
     )
-      ? prepareTestPriorities(allTests, this.rootDir, (message) => this.warn(message))
+      ? prepareTestPriorities(allTests, this.rootDir, (message) =>
+          this.warn(message),
+        )
+      : [];
+
+    const testIssues = priorityTagsEnabled(
+      this.options.issues?.fromTags,
+      reporterEnv("ISSUES_FROM_TAGS"),
+    )
+      ? prepareTestIssues(allTests, this.rootDir, (message) =>
+          this.warn(message),
+        )
       : [];
 
     const detected = detectMetadata(process.env);
     const startedAt = new Date();
-    const branch = this.options.branch ?? reporterEnv("BRANCH") ?? detected.branch;
-    const commitSha = this.options.commitSha ?? reporterEnv("COMMIT_SHA") ?? detected.commitSha;
+    const branch =
+      this.options.branch ?? reporterEnv("BRANCH") ?? detected.branch;
+    const commitSha =
+      this.options.commitSha ?? reporterEnv("COMMIT_SHA") ?? detected.commitSha;
     const pullRequest =
       this.options.pullRequest ??
       positiveInteger(reporterEnv("PULL_REQUEST")) ??
@@ -136,7 +169,11 @@ export default class TraceOptixReporter {
     const ci = resolveCiContext(this.options.ci, process.env, detected.ci);
     const shard = config.shard
       ? {
-          groupId: first(reporterEnv("SHARD_GROUP"), ci?.buildId, randomUUID()) as string,
+          groupId: first(
+            reporterEnv("SHARD_GROUP"),
+            ci?.buildId,
+            randomUUID(),
+          ) as string,
           index: config.shard.current - 1,
           total: config.shard.total,
         }
@@ -150,7 +187,8 @@ export default class TraceOptixReporter {
       first(this.options.namePattern, reporterEnv("RUN_NAME_PATTERN")),
     );
     const missingContext = missingRunContext(configuredRunName, ci);
-    if (missingContext.length > 0) this.runContextWarning(missingContext, runName);
+    if (missingContext.length > 0)
+      this.runContextWarning(missingContext, runName);
     const runTags = resolveRunTags(
       reporterEnv("RUN_TAGS"),
       this.options.tags,
@@ -165,7 +203,9 @@ export default class TraceOptixReporter {
     if (configuredBaseUrl) {
       this.publishTarget = {
         baseUrl: configuredBaseUrl,
-        source: first(this.options.url) ? "playwright.config.ts url option" : "TRACEOPTIX_URL",
+        source: first(this.options.url)
+          ? "playwright.config.ts url option"
+          : "TRACEOPTIX_URL",
       };
     }
     const publishSettings = this.resolvePublishSettings();
@@ -174,7 +214,11 @@ export default class TraceOptixReporter {
         ? first(this.options.project, reporterEnv("PROJECT"))
         : publishSettings.project;
     const createPortableBundle = (requiredForLivePublishing = false) => {
-      if ((!requiredForLivePublishing && paths.bundleMode === "off") || this.bundle) return;
+      if (
+        (!requiredForLivePublishing && paths.bundleMode === "off") ||
+        this.bundle
+      )
+        return;
       this.bundle = new PortableRunBundle({
         bundleId,
         mode: paths.bundleMode,
@@ -185,7 +229,10 @@ export default class TraceOptixReporter {
         run: removeUndefined({
           name: runName,
           framework: "playwright" as const,
-          environment: first(this.options.environment, reporterEnv("ENVIRONMENT")),
+          environment: first(
+            this.options.environment,
+            reporterEnv("ENVIRONMENT"),
+          ),
           branch,
           commitSha,
           pullRequest,
@@ -195,6 +242,7 @@ export default class TraceOptixReporter {
           tags: runTags,
         }),
         testPriorities,
+        testIssues,
       });
     };
     if (typeof publishSettings === "string") {
@@ -210,7 +258,10 @@ export default class TraceOptixReporter {
     };
     this.reportPublishingPlan(publishSettings, paths);
 
-    const client = new TraceOptixClient(publishSettings.baseUrl, publishSettings.token);
+    const client = new TraceOptixClient(
+      publishSettings.baseUrl,
+      publishSettings.token,
+    );
     const commonBody = {
       project: publishSettings.project,
       name: runName,
@@ -232,9 +283,46 @@ export default class TraceOptixReporter {
         boundedInteger(this.options.capabilityTimeoutMs, 500, 30_000, 5_000),
       )
       .then(async (capability: PublishCapabilitiesResponse) => {
+        if (capability.executionPresenceVersion === 1) {
+          try {
+            const { runId } = await client.registerExecution({
+              operation: "start",
+              project: publishSettings.project,
+              sourceBundleId: bundleId,
+              name: runName,
+              branch,
+              startedAt: startedAt.toISOString(),
+              planned: allTests.length,
+              collectionMode: capability.collectionMode,
+              policyRevision: capability.policyRevision,
+            });
+            if (!/^[0-9a-f-]{36}$/i.test(runId))
+              throw new Error("invalid execution identity");
+            this.presence = {
+              client,
+              project: publishSettings.project,
+              id: runId,
+            };
+            this.heartbeatTimer = setInterval(() => {
+              void this.sendHeartbeat();
+            }, 15_000);
+            this.heartbeatTimer.unref();
+            this.output(`Run started: ${runId}`);
+          } catch (error) {
+            this.warn(
+              `Could not register live execution: ${safeErrorMessage(error)}`,
+            );
+          }
+        }
         if (capability.collectionMode === "summary_only") {
+          if (testIssues.length)
+            this.warn(
+              "Ticket tags are not applied in Summary-only mode because it does not retain individual test identities.",
+            );
           if (!capability.summary || capability.summary.remaining <= 0) {
-            throw new Error("Summary-only publishing is unavailable or its allowance is exhausted");
+            throw new Error(
+              "Summary-only publishing is unavailable or its allowance is exhausted",
+            );
           }
           this.summary = {
             client,
@@ -271,6 +359,7 @@ export default class TraceOptixReporter {
           }),
           bundleId,
           testPriorities,
+          testIssues,
           organization: publishSettings.organization,
           baseUrl: publishSettings.baseUrl,
         };
@@ -280,7 +369,9 @@ export default class TraceOptixReporter {
         // Unknown policy must never cause the reporter to leak details to an older or failing
         // server. The Playwright command remains warning-only, as publishing always has been.
         this.publishFailed = true;
-        this.warn(`Could not resolve the project publishing mode: ${safeErrorMessage(error)}`);
+        this.warn(
+          `Could not resolve the project publishing mode: ${safeErrorMessage(error)}`,
+        );
         // Capability failure must still enter the ordinary full-detail capture path. No data is
         // sent to an unknown server policy, but steps and evidence remain available in the ZIP.
         createPortableBundle();
@@ -289,6 +380,9 @@ export default class TraceOptixReporter {
   }
 
   onTestEnd(test: ReporterTestCase, result: ReporterTestResult): void {
+    this.finishedTests.add(
+      test.id ?? `${test.location.file}\0${test.titlePath().join("\0")}`,
+    );
     if (!this.modePromise && !this.bundle) return;
     const task = (async () => {
       const mode = this.modePromise ? await this.modePromise : "full";
@@ -296,12 +390,14 @@ export default class TraceOptixReporter {
         this.recordSummaryOutcome(test, result);
         return;
       }
-      if (mode === "full" && (result.attachments.length > 0 || result.steps?.length)) {
+      if (mode === "full") {
         await this.captureTestDetails(test, result);
       }
     })().catch((error: unknown) => {
       this.publishFailed = true;
-      this.warn(`Could not capture test details for "${test.title}": ${safeErrorMessage(error)}`);
+      this.warn(
+        `Could not capture test details for "${test.title}": ${safeErrorMessage(error)}`,
+      );
     });
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task));
@@ -311,9 +407,53 @@ export default class TraceOptixReporter {
    * Playwright invokes this after every reporter's onEnd has completed. That ordering is what
    * makes it safe to consume the built-in JUnit reporter's file, including any later enrichment.
    */
+  private sendHeartbeat(): Promise<void> {
+    if (this.heartbeatPending) return this.heartbeatPending;
+    if (!this.presence) return Promise.resolve();
+    const { client, project, id } = this.presence;
+    this.heartbeatPending = client
+      .heartbeatExecution({
+        operation: "heartbeat",
+        project,
+        id,
+        completed: this.finishedTests.size,
+        phase: this.presencePhase,
+      })
+      .then(() => {})
+      .catch((error) => {
+        if (!this.heartbeatWarned) {
+          this.heartbeatWarned = true;
+          this.warn(
+            `Live execution heartbeat unavailable: ${safeErrorMessage(error)}`,
+          );
+        }
+      })
+      .finally(() => {
+        this.heartbeatPending = undefined;
+      });
+    return this.heartbeatPending;
+  }
+
   async onExit(): Promise<void> {
+    try {
+      await this.modePromise;
+      this.presencePhase = "uploading";
+      await this.heartbeatPending;
+      await this.sendHeartbeat();
+      await this.finalizePublication();
+    } finally {
+      clearInterval(this.heartbeatTimer);
+      await this.heartbeatPending;
+    }
+  }
+
+  private async finalizePublication(): Promise<void> {
     await Promise.allSettled([...this.pending]);
-    const mode = this.modePromise ? await this.modePromise : this.bundle ? "full" : null;
+    const mode = this.modePromise
+      ? await this.modePromise
+      : this.bundle
+        ? "full"
+        : null;
     if (mode === "summary_only") {
       await this.publishSummary();
       this.reportFinalPublicationStatus();
@@ -335,28 +475,61 @@ export default class TraceOptixReporter {
 
         let upload = run.reportUpload;
         if (run.client.isNearExpiry(upload)) {
-          upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
+          upload = await run.client.refreshArtifact(
+            run.response.runId,
+            upload.artifactId,
+          );
         }
         try {
           await run.client.put(upload, report);
         } catch (error) {
-          if (!(error instanceof HttpError) || ![401, 403].includes(error.status)) throw error;
-          upload = await run.client.refreshArtifact(run.response.runId, upload.artifactId);
+          if (
+            !(error instanceof HttpError) ||
+            ![401, 403].includes(error.status)
+          )
+            throw error;
+          upload = await run.client.refreshArtifact(
+            run.response.runId,
+            upload.artifactId,
+          );
           await run.client.put(upload, report);
         }
 
         const completed = await run.client.complete(run.response);
         this.publicationSucceeded = true;
-        if (completed.missingAttachments && completed.missingAttachments.length > 0) {
+        if (
+          completed.missingAttachments &&
+          completed.missingAttachments.length > 0
+        ) {
           this.publishFailed = true;
-          this.warn(`${completed.missingAttachments.length} evidence upload(s) are missing.`);
+          this.warn(
+            `${completed.missingAttachments.length} evidence upload(s) are missing.`,
+          );
         }
         const runUrl = browserRunUrl(run);
-        this.output(runUrl ? `Published run: ${runUrl}` : `Published run ${run.response.runId}.`);
+        this.output(
+          runUrl
+            ? `Published run: ${runUrl}`
+            : `Published run ${run.response.runId}.`,
+        );
         if (runUrl) await this.writeGithubSummary(runUrl);
       } catch (error) {
         this.publishFailed = true;
-        this.warn(`Could not publish the JUnit report: ${safeErrorMessage(error)}`);
+        this.warn(
+          `Could not publish the JUnit report: ${safeErrorMessage(error)}`,
+        );
+        try {
+          await run.client.reportPublicationFailure(
+            run.response,
+            error instanceof HttpError && error.status === 429
+              ? "rate_limited"
+              : "publication_failed",
+          );
+        } catch {
+          this.warn(
+            "Could not notify the server of publication failure; the unfinished upload session will expire. Retain the portable ZIP for recovery.",
+          );
+        }
       }
     } else if (this.fullPublication) {
       this.publishFailed = true;
@@ -373,7 +546,9 @@ export default class TraceOptixReporter {
           const outputPath = await this.bundle.finalize(junitPath);
           bundleOutputPath = outputPath;
           this.output(`Portable run bundle: ${outputPath}`);
-          this.output("Upload this ZIP from the TraceOptix project Upload page.");
+          this.output(
+            "Upload this ZIP from the TraceOptix project Upload page.",
+          );
         } else {
           await this.bundle.discard();
         }
@@ -385,9 +560,13 @@ export default class TraceOptixReporter {
     this.reportFinalPublicationStatus(bundleOutputPath, bundleError);
   }
 
-  private recordSummaryOutcome(test: ReporterTestCase, result: ReporterTestResult): void {
+  private recordSummaryOutcome(
+    test: ReporterTestCase,
+    result: ReporterTestResult,
+  ): void {
     if (!this.summary) return;
-    const key = test.id ?? `${test.location.file}\0${test.titlePath().join("\0")}`;
+    const key =
+      test.id ?? `${test.location.file}\0${test.titlePath().join("\0")}`;
     const previous = this.summary.outcomes.get(key);
     let status: "passed" | "failed" | "skipped" | "errored";
     switch (result.status) {
@@ -401,13 +580,16 @@ export default class TraceOptixReporter {
         status = "errored";
         break;
       default:
-        throw new Error(`unsupported Playwright result status: ${String(result.status)}`);
+        throw new Error(
+          `unsupported Playwright result status: ${String(result.status)}`,
+        );
     }
     this.summary.outcomes.set(key, {
       status,
       flaky:
         status === "passed" &&
-        (result.retry > 0 || (previous !== undefined && previous.status !== "passed")),
+        (result.retry > 0 ||
+          (previous !== undefined && previous.status !== "passed")),
     });
   }
 
@@ -427,21 +609,33 @@ export default class TraceOptixReporter {
       counts[outcome.status] += 1;
       if (outcome.flaky) counts.flaky += 1;
     }
-    const total = counts.passed + counts.failed + counts.skipped + counts.errored + counts.blocked;
+    const total =
+      counts.passed +
+      counts.failed +
+      counts.skipped +
+      counts.errored +
+      counts.blocked;
     try {
       const response = await summary.client.createSummaryRun(
         summary.summaryUrl,
         {
           ...summary.body,
           finishedAt: finishedAt.toISOString(),
-          durationMs: Math.max(0, finishedAt.getTime() - summary.startedAt.getTime()),
+          durationMs: Math.max(
+            0,
+            finishedAt.getTime() - summary.startedAt.getTime(),
+          ),
           total,
           ...counts,
         },
         summary.bundleId,
       );
       this.publicationSucceeded = true;
-      const runUrl = browserRunUrlFor(summary.baseUrl, summary.organization, response.runId);
+      const runUrl = browserRunUrlFor(
+        summary.baseUrl,
+        summary.organization,
+        response.runId,
+      );
       this.output(
         runUrl
           ? `Published Summary-only run: ${runUrl}`
@@ -450,12 +644,26 @@ export default class TraceOptixReporter {
       if (runUrl) await this.writeGithubSummary(runUrl);
     } catch (error) {
       this.publishFailed = true;
-      this.warn(`Could not publish the aggregate run summary: ${safeErrorMessage(error)}`);
+      this.warn(
+        `Could not publish the aggregate run summary: ${safeErrorMessage(error)}`,
+      );
     }
   }
 
-  private async captureTestDetails(test: ReporterTestCase, result: ReporterTestResult): Promise<void> {
-    const steps = prepareSteps(test, result, this.rootDir, (message) => this.warn(message));
+  private async captureTestDetails(
+    test: ReporterTestCase,
+    result: ReporterTestResult,
+  ): Promise<void> {
+    const plan = await this.stepPlans.forTest(test, (message) =>
+      this.warn(message),
+    );
+    const steps = prepareSteps(
+      test,
+      result,
+      this.rootDir,
+      (message) => this.warn(message),
+      plan,
+    );
     const attachments = await prepareAttachments(
       test,
       result,
@@ -473,7 +681,9 @@ export default class TraceOptixReporter {
           attachments,
         });
       } catch (error) {
-        this.warn(`Could not stage test details for "${test.title}": ${safeErrorMessage(error)}`);
+        this.warn(
+          `Could not stage test details for "${test.title}": ${safeErrorMessage(error)}`,
+        );
       }
     }
   }
@@ -491,7 +701,9 @@ export default class TraceOptixReporter {
       report = await readFile(junitPath);
     } catch (error) {
       this.publishFailed = true;
-      this.warn(`Could not read the final JUnit report: ${safeErrorMessage(error)}`);
+      this.warn(
+        `Could not read the final JUnit report: ${safeErrorMessage(error)}`,
+      );
       return null;
     }
 
@@ -511,13 +723,36 @@ export default class TraceOptixReporter {
         publication.bundleId,
       );
       const reportUpload = response.uploads[0];
-      if (!reportUpload) throw new Error("run creation returned no JUnit upload URL");
-      if (publication.testPriorities.length > 0) {
+      if (!reportUpload)
+        throw new Error("run creation returned no JUnit upload URL");
+      if (publication.testIssues.length > 0) {
         try {
-          await publication.client.declareTestPriorities(response, publication.testPriorities);
+          const outcome = await publication.client.declareTestIssues(
+            response,
+            publication.testIssues,
+          );
+          if (outcome.rejected)
+            this.warn(
+              `${outcome.rejected} ticket references could not be resolved. Check the project's default tracker and tag provider; full ticket URLs work without a default.`,
+            );
         } catch (error) {
           this.publishFailed = true;
-          this.warn(`Could not publish testcase priorities: ${safeErrorMessage(error)}`);
+          this.warn(
+            `Could not publish testcase ticket links: ${safeErrorMessage(error)}`,
+          );
+        }
+      }
+      if (publication.testPriorities.length > 0) {
+        try {
+          await publication.client.declareTestPriorities(
+            response,
+            publication.testPriorities,
+          );
+        } catch (error) {
+          this.publishFailed = true;
+          this.warn(
+            `Could not publish testcase priorities: ${safeErrorMessage(error)}`,
+          );
         }
       }
       return {
@@ -545,7 +780,9 @@ export default class TraceOptixReporter {
           await run.client.declareSteps(run.response, attempt.steps);
         } catch (error) {
           this.publishFailed = true;
-          this.warn(`Could not record steps for "${attempt.test}": ${safeErrorMessage(error)}`);
+          this.warn(
+            `Could not record steps for "${attempt.test}": ${safeErrorMessage(error)}`,
+          );
         }
       }
       if (attempt.attachments.length === 0) continue;
@@ -563,13 +800,20 @@ export default class TraceOptixReporter {
         await Promise.all(
           declared.uploads.map((upload, index) => {
             const attachment = attempt.attachments[index];
-            if (!attachment) throw new Error("evidence upload order did not match its declaration");
-            return this.uploads.use(() => run.client.put(upload, attachment.body));
+            if (!attachment)
+              throw new Error(
+                "evidence upload order did not match its declaration",
+              );
+            return this.uploads.use(() =>
+              run.client.put(upload, attachment.body),
+            );
           }),
         );
       } catch (error) {
         this.publishFailed = true;
-        this.warn(`Could not publish evidence for "${attempt.test}": ${safeErrorMessage(error)}`);
+        this.warn(
+          `Could not publish evidence for "${attempt.test}": ${safeErrorMessage(error)}`,
+        );
       }
     }
   }
@@ -601,7 +845,9 @@ export default class TraceOptixReporter {
 
     return {
       baseUrl,
-      baseUrlSource: optionUrl ? "playwright.config.ts url option" : "TRACEOPTIX_URL",
+      baseUrlSource: optionUrl
+        ? "playwright.config.ts url option"
+        : "TRACEOPTIX_URL",
       token,
       project,
       organization: first(this.options.organization, reporterEnv("ORG")),
@@ -611,13 +857,24 @@ export default class TraceOptixReporter {
   private resolvePaths(config: ReporterFullConfig): ResolvedPaths | string {
     const junitFile = first(this.options.junitFile);
     if (!junitFile) return "missing reporter junitFile option";
-    const configDirectory = config.configFile ? dirname(resolve(config.configFile)) : process.cwd();
+    const configDirectory = config.configFile
+      ? dirname(resolve(config.configFile))
+      : process.cwd();
     const junitPath = resolve(configDirectory, junitFile);
-    const requestedMode = first(this.options.bundle?.mode, reporterEnv("BUNDLE_MODE"));
-    if (requestedMode && !["always", "on-failure", "off"].includes(requestedMode)) {
+    const requestedMode = first(
+      this.options.bundle?.mode,
+      reporterEnv("BUNDLE_MODE"),
+    );
+    if (
+      requestedMode &&
+      !["always", "on-failure", "off"].includes(requestedMode)
+    ) {
       this.warn(`Unknown bundle mode "${requestedMode}"; using "always".`);
     }
-    const bundleOutput = first(this.options.bundle?.outputDir, reporterEnv("BUNDLE_OUTPUT_DIR"));
+    const bundleOutput = first(
+      this.options.bundle?.outputDir,
+      reporterEnv("BUNDLE_OUTPUT_DIR"),
+    );
     return {
       junitPath,
       bundleMode: resolveBundleMode(requestedMode),
@@ -628,13 +885,22 @@ export default class TraceOptixReporter {
   }
 
   private warn(message: string): void {
-    process.stderr.write(`[traceoptix] Warning: ${safeErrorMessage(message)}\n`);
+    process.stderr.write(
+      `[traceoptix] Warning: ${safeErrorMessage(message)}\n`,
+    );
   }
 
-  private reportPublishingPlan(settings: PublishSettings, paths: ResolvedPaths): void {
+  private reportPublishingPlan(
+    settings: PublishSettings,
+    paths: ResolvedPaths,
+  ): void {
     const selectedUrl = publicBaseUrl(settings.baseUrl);
-    this.output(`Publishing target: ${selectedUrl} (${settings.baseUrlSource}).`);
-    this.output(bundlePlanMessage(paths.bundleMode, paths.bundleOutputDirectory));
+    this.output(
+      `Publishing target: ${selectedUrl} (${settings.baseUrlSource}).`,
+    );
+    this.output(
+      bundlePlanMessage(paths.bundleMode, paths.bundleOutputDirectory),
+    );
 
     const optionUrl = first(this.options.url);
     const environmentUrl = reporterEnv("URL");
@@ -664,7 +930,10 @@ export default class TraceOptixReporter {
     }
   }
 
-  private reportFinalPublicationStatus(bundleOutputPath?: string, bundleError?: string): void {
+  private reportFinalPublicationStatus(
+    bundleOutputPath?: string,
+    bundleError?: string,
+  ): void {
     if (!this.reportingAttempted || this.publicationSucceeded) return;
     const lines = ["TraceOptix results were not published."];
     if (this.publishTarget) {
@@ -673,12 +942,18 @@ export default class TraceOptixReporter {
       );
     }
     if (bundleOutputPath) {
-      lines.push(`Portable run bundle retained at: ${singleLine(bundleOutputPath)}.`);
+      lines.push(
+        `Portable run bundle retained at: ${singleLine(bundleOutputPath)}.`,
+      );
       lines.push("Upload this ZIP from the TraceOptix project Upload page.");
     } else if (this.bundlePlan?.mode === "off") {
-      lines.push("No portable run bundle was created because bundle mode is off.");
+      lines.push(
+        "No portable run bundle was created because bundle mode is off.",
+      );
     } else if (this.bundleSuppressedReason) {
-      lines.push(`No portable run bundle was created because ${this.bundleSuppressedReason}.`);
+      lines.push(
+        `No portable run bundle was created because ${this.bundleSuppressedReason}.`,
+      );
     } else if (bundleError) {
       lines.push(`Portable run bundle creation failed: ${bundleError}.`);
       if (this.bundlePlan) {
@@ -733,11 +1008,18 @@ export default class TraceOptixReporter {
       "    ],",
       "  }));",
       ...(this.bundlePlan
-        ? [bundlePlanMessage(this.bundlePlan.mode, this.bundlePlan.outputDirectory)]
+        ? [
+            bundlePlanMessage(
+              this.bundlePlan.mode,
+              this.bundlePlan.outputDirectory,
+            ),
+          ]
         : []),
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`);
+    process.stderr.write(
+      `${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`,
+    );
   }
 
   /** Missing labels should be discoverable without making observability break the test command. */
@@ -749,7 +1031,9 @@ export default class TraceOptixReporter {
       "Set reporter options (name, ci) or the corresponding TRACEOPTIX_RUN_NAME and TRACEOPTIX_CI_* environment variables.",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(`${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`);
+    process.stderr.write(
+      `${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`,
+    );
   }
 
   private output(message: string): void {
@@ -762,7 +1046,9 @@ export default class TraceOptixReporter {
     try {
       await appendFile(summary, `\n[TraceOptix run](${runUrl})\n`, "utf8");
     } catch (error) {
-      this.warn(`Could not update the GitHub job summary: ${safeErrorMessage(error)}`);
+      this.warn(
+        `Could not update the GitHub job summary: ${safeErrorMessage(error)}`,
+      );
     }
   }
 }
@@ -790,12 +1076,16 @@ function missingRunContext(
   ci: TraceOptixCiOptions | undefined,
 ): string[] {
   return [
-    !configuredRunName ? "TRACEOPTIX_RUN_NAME (or reporter name option)" : undefined,
+    !configuredRunName
+      ? "TRACEOPTIX_RUN_NAME (or reporter name option)"
+      : undefined,
     !ci?.provider ? "TRACEOPTIX_CI_PROVIDER" : undefined,
     !ci?.buildId && !ci?.buildNumber
       ? "TRACEOPTIX_CI_BUILD_ID or TRACEOPTIX_CI_BUILD_NUMBER"
       : undefined,
-    !ci?.pipelineName ? "TRACEOPTIX_CI_PIPELINE_NAME (or TRACEOPTIX_CI_BUILD_NAME)" : undefined,
+    !ci?.pipelineName
+      ? "TRACEOPTIX_CI_PIPELINE_NAME (or TRACEOPTIX_CI_BUILD_NAME)"
+      : undefined,
     !ci?.jobName ? "TRACEOPTIX_CI_JOB_NAME" : undefined,
     !ci?.jobUrl && !ci?.pipelineUrl
       ? "TRACEOPTIX_CI_JOB_URL or TRACEOPTIX_CI_PIPELINE_URL"
@@ -821,7 +1111,9 @@ function boundedInteger(
 }
 
 function first(...values: Array<string | undefined>): string | undefined {
-  return values.find((value) => value !== undefined && value.trim() !== "")?.trim();
+  return values
+    .find((value) => value !== undefined && value.trim() !== "")
+    ?.trim();
 }
 
 function publicBaseUrl(value: string): string {
@@ -843,7 +1135,9 @@ function normalizedBaseUrl(value: string): string {
 
 function isLoopbackUrl(value: string): boolean {
   try {
-    const hostname = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const hostname = new URL(value).hostname
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "");
     return (
       hostname === "localhost" ||
       hostname === "::1" ||
@@ -856,7 +1150,9 @@ function isLoopbackUrl(value: string): boolean {
 }
 
 function environmentFlag(value: string | undefined): boolean {
-  return value ? ["1", "true", "yes", "on"].includes(value.trim().toLowerCase()) : false;
+  return value
+    ? ["1", "true", "yes", "on"].includes(value.trim().toLowerCase())
+    : false;
 }
 
 function bundlePlanMessage(mode: BundleMode, outputDirectory: string): string {

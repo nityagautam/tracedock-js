@@ -1,3 +1,4 @@
+import type { TestIssueDeclaration } from "./issues.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -70,6 +71,7 @@ export class PortableRunBundle {
       testCaseCount: number;
       run: BundleRunMetadata;
       testPriorities: TestPriorityDeclaration[];
+      testIssues?: TestIssueDeclaration[];
     },
   ) {
     this.bundleId = input.bundleId;
@@ -184,6 +186,7 @@ export class PortableRunBundle {
         sha256: report.sha256,
       },
       testPriorities: this.input.testPriorities,
+      testIssues: this.input.testIssues ?? [],
       attempts: this.attempts,
     };
     const manifestPath = join(this.stageRoot, "manifest.json");
