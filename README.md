@@ -192,6 +192,10 @@ variables, the paired Playwright reporter configuration, and a link back to this
 warning-only so a developer who intentionally runs without TraceOptix still gets the original
 Playwright exit code.
 
+Run names and CI metadata are optional. Once the required publishing settings are valid, any
+suggestions for adding run labels or CI links are printed as informational output, not warnings.
+Missing CI metadata does not prevent publication, including when running locally.
+
 Only the documented `TRACEOPTIX_*` environment variables and TraceOptix TypeScript exports are
 supported.
 
@@ -207,60 +211,155 @@ portable ZIP. At the end it warns that publication did not complete and prints t
 path. If bundle creation is disabled or fails, the final warning states that explicitly and shows
 the configured output directory when available.
 
+A capability-negotiation failure always prints `Could not resolve the project publishing mode:
+<server message>` first — the exact response, useful for grepping logs or filing a support
+request. One of three anticipated HTTP statuses (401, 403, 404) also gets a plain-language block
+appended, because the raw message alone is guesswork for whoever reads it — most sharply for 404,
+where the server deliberately returns the identical "unknown project" whether a project key is
+simply misspelled or genuinely belongs to a different organisation (confirming the latter would
+let a token enumerate project keys outside its own org, so it does not distinguish the two). Any
+other status prints only the original message, so no failure is ever silently hidden:
+
+- **404** — `Could not publish to TraceOptix: project "<project>" was not found for this token's
+  organisation.`, followed by a line naming both possible causes and a line telling you to check
+  that `TRACEOPTIX_TOKEN` was minted for the organisation that owns the configured project, and
+  that `project` (or `TRACEOPTIX_PROJECT`) is the project's key, not its display name.
+- **403** — `Could not publish to TraceOptix: this token is not valid for project "<project>".`,
+  followed by a line explaining the token is scoped to a different project and how to fix it.
+- **401** — `Could not publish to TraceOptix: TRACEOPTIX_TOKEN is invalid, expired or revoked.`,
+  followed by a line telling you to mint a replacement.
+
+This is the single most common cause of "results were not published" with no other explanation:
+a token minted for one project (or organisation) left configured against a `playwright.config.ts`
+that points at a different one, usually after switching between a real project and a disposable
+test project without re-minting the token to match.
+
 The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
 If `@traceoptix/playwright` is absent from the reporter list, Playwright never loads it and no
 package code can print a configuration message.
 
 ## Options
 
-This example shows every reporter option. Supply only the fields your project needs:
+Every supported reporter option, commented in place, as a `playwright.config.ts` you can copy and
+trim. Only `junitFile` is required; everything else falls back to an environment variable, a
+detected value, or the documented default when omitted.
 
 ```ts
-[
-  "@traceoptix/playwright",
-  {
-    // Required and shared with Playwright's built-in JUnit reporter.
-    junitFile: "test-results/reports/junit-result.xml",
+import { defineConfig } from "@playwright/test";
 
-    // TraceOptix destination. The token is deliberately not a reporter option.
-    url: "https://traceoptix.example.com",
-    project: "checkout-web",
-    organization: "acme",
+export default defineConfig({
+  reporter: [
+    ["line"],
+    ["junit", { outputFile: "test-results/reports/junit-result.xml", includeRetries: true }],
+    [
+      "@traceoptix/playwright",
+      {
+        // Required. Shared with Playwright's built-in JUnit reporter above — both must point at
+        // the same file. Relative paths resolve from the Playwright config directory.
+        junitFile: "test-results/reports/junit-result.xml",
 
-    // Run metadata.
-    name: "Checkout regression",
-    namePattern: "{name}-{timestamp}",
-    environment: "staging",
-    branch: "main",
-    commitSha: "abc123",
-    pullRequest: 42,
-    tags: {
-      suite: "regression",
-      team: "checkout",
-    },
+        // TraceOptix origin. Falls back to TRACEOPTIX_URL. A mismatch between this option and
+        // TRACEOPTIX_URL prints a startup warning naming both and stating which one wins (this
+        // one). A loopback host (localhost/127.0.0.1) prints a second warning, since inside CI
+        // "localhost" means the build agent, not your TraceOptix server.
+        url: "https://traceoptix.example.com",
 
-    // Explicit values override TRACEOPTIX_CI_* and detected CI metadata.
-    ci: {
-      provider: "azure",
-      buildId: "9001",
-      buildNumber: "84",
-      jobName: "playwright-chromium",
-      jobUrl: "https://ci.example/jobs/9001",
-      pipelineName: "Nightly regression",
-      pipelineUrl: "https://ci.example/pipelines/9001",
-      actor: "release-bot",
-      triggerEvent: "schedule",
-    },
+        // TraceOptix project key (not its display name). Falls back to TRACEOPTIX_PROJECT. Must
+        // belong to the same organisation TRACEOPTIX_TOKEN was minted for — a token valid for a
+        // different project or organisation fails capability negotiation with an actionable
+        // warning (see "Configure" above) rather than silently publishing nowhere.
+        project: "checkout-web",
 
-    priority: { fromTags: true },
-    uploadConcurrency: 3,
-    capabilityTimeoutMs: 5_000,
-    bundle: {
-      mode: "always",
-      outputDir: "test-results/reports/traceoptix-bundles",
-    },
-  },
-];
+        // Organization slug. Optional — falls back to TRACEOPTIX_ORG. Used only to print the
+        // final browser run URL; never sent to the server and never affects authorization.
+        organization: "acme",
+
+        // Base run name. Falls back to TRACEOPTIX_RUN_NAME, then a name derived from detected CI
+        // build metadata. The final run name also has a timestamp appended; see namePattern.
+        name: "Checkout regression",
+
+        // Run-name format. Falls back to TRACEOPTIX_RUN_NAME_PATTERN. Supports {name} and
+        // {timestamp}; default is "{name}-{timestamp}", producing e.g.
+        // "checkout-regression-20260924T104231456Z". Set to "{name}" only when an external build
+        // number already makes the supplied name unique on its own.
+        namePattern: "{name}-{timestamp}",
+
+        // Target environment label (e.g. staging, production). Falls back to
+        // TRACEOPTIX_ENVIRONMENT. Optional; omitted entirely if neither is set.
+        environment: "staging",
+
+        // Source branch. Falls back to TRACEOPTIX_BRANCH, then detected CI metadata.
+        branch: "main",
+
+        // Source commit SHA. Falls back to TRACEOPTIX_COMMIT_SHA, then detected CI metadata.
+        commitSha: "abc123",
+
+        // Pull/merge request number. Falls back to TRACEOPTIX_PULL_REQUEST, then detected CI
+        // metadata. Must be a positive integer.
+        pullRequest: 42,
+
+        // Run tags. Falls back to TRACEOPTIX_RUN_TAGS (comma-separated key=value pairs, or a JSON
+        // object — see "Run tags" below). Reporter-option values here win over a matching
+        // environment entry on the same key. The reporter always adds its own reserved
+        // "playwright-version" and "test-count" tags; neither can be overridden here.
+        tags: {
+          suite: "regression",
+          team: "checkout",
+        },
+
+        // CI metadata. Every field here overrides both TRACEOPTIX_CI_* and whatever the reporter
+        // auto-detects from GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, CircleCI,
+        // Buildkite, Bitbucket Pipelines or TeamCity. Omit the whole object to use detection as-is.
+        ci: {
+          // One of: github, gitlab, jenkins, circleci, buildkite, azure, bitbucket, teamcity,
+          // local, unknown.
+          provider: "azure",
+          buildId: "9001",
+          buildNumber: "84",
+          jobName: "playwright-chromium",
+          jobUrl: "https://ci.example/jobs/9001",
+          pipelineName: "Nightly regression",
+          pipelineUrl: "https://ci.example/pipelines/9001",
+          actor: "release-bot",
+          triggerEvent: "schedule",
+        },
+
+        // Synchronize exact @p0–@p3 Playwright tags as testcase priority. Falls back to
+        // TRACEOPTIX_PRIORITY_FROM_TAGS. Defaults to true; set false to leave priority entirely
+        // under manual TraceOptix control.
+        priority: { fromTags: true },
+
+        // Detect ticket/issue tags (e.g. @jira:CHK-482) and link them to the matching testcase.
+        // Falls back to TRACEOPTIX_ISSUES_FROM_TAGS. Defaults to true; links are additive and
+        // never remove an existing link. Summary-only runs do not retain individual test
+        // identities, so this has no effect when the server selects that mode.
+        issues: { fromTags: true },
+
+        // Maximum simultaneous evidence (screenshot/video/trace) uploads. No environment
+        // fallback. Integer from 1 to 16; defaults to 3.
+        uploadConcurrency: 3,
+
+        // Timeout, in milliseconds, for the startup project-capability lookup. No environment
+        // fallback. 500–30,000; defaults to 5,000. A timeout is treated the same as any other
+        // capability-negotiation failure: offline full-detail capture, no live publish.
+        capabilityTimeoutMs: 5_000,
+
+        // Portable run ZIP. Falls back to TRACEOPTIX_BUNDLE_MODE / TRACEOPTIX_BUNDLE_OUTPUT_DIR.
+        bundle: {
+          // "always" (default): write one every run. "on-failure": only when publishing did not
+          // fully succeed, including a capability-negotiation failure. "off": never write one —
+          // a failed publish then has no recovery path other than re-running the suite.
+          mode: "always",
+          // Defaults to "traceoptix-bundles" beside junitFile.
+          outputDir: "test-results/reports/traceoptix-bundles",
+        },
+
+        // Not shown above: TRACEOPTIX_TOKEN. There is deliberately no `token` reporter option —
+        // provide the secret only via the environment or a CI secret store, never in this file.
+      },
+    ],
+  ],
+});
 ```
 
 | Option                | Accepted value                                     | Environment fallback                         | Purpose                                                                                                    |
@@ -278,6 +377,7 @@ This example shows every reporter option. Supply only the fields your project ne
 | `ci`                  | CI metadata object                                 | `TRACEOPTIX_CI_*`, then detected CI metadata | Build, job, pipeline, actor and trigger context                                                            |
 | `tags`                | `Record<string, string>`                           | `TRACEOPTIX_RUN_TAGS`                        | Run tags; reporter-option values override matching environment entries                                     |
 | `priority.fromTags`   | Boolean; default `true`                            | `TRACEOPTIX_PRIORITY_FROM_TAGS`              | Synchronizes exact `@p0`–`@p3` Playwright tags                                                             |
+| `issues.fromTags`     | Boolean; default `true`                            | `TRACEOPTIX_ISSUES_FROM_TAGS`                | Detects ticket/issue tags and links them to the matching testcase                                          |
 | `uploadConcurrency`   | Integer from 1 to 16; default 3                    | —                                            | Maximum simultaneous evidence uploads                                                                      |
 | `capabilityTimeoutMs` | 500–30,000 milliseconds; default 5,000             | —                                            | Project capability lookup timeout                                                                          |
 | `bundle.mode`         | `always`, `on-failure`, or `off`; default `always` | `TRACEOPTIX_BUNDLE_MODE`                     | Portable ZIP retention policy                                                                              |

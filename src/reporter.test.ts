@@ -348,6 +348,90 @@ describe("TraceOptixReporter", () => {
     expect(stdout.mock.calls.flat().join("")).toContain(`output directory: ${bundleDirectory}`);
   });
 
+  it.each([
+    [
+      404,
+      "unknown project",
+      'Could not publish to TraceOptix: project "checkout-web" was not found for this token\'s organisation.',
+      "belongs to a different organisation",
+    ],
+    [
+      403,
+      "token is not valid for this project",
+      'Could not publish to TraceOptix: this token is not valid for project "checkout-web".',
+      "Mint one for",
+    ],
+    [
+      401,
+      "API token is invalid, expired or revoked",
+      "Could not publish to TraceOptix: TRACEOPTIX_TOKEN is invalid, expired or revoked.",
+      "Mint a replacement",
+    ],
+  ])(
+    "appends a plain-language block after the raw message for a %i capability-negotiation failure",
+    async (status, serverMessage, headline, nextStep) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string | URL | Request) =>
+          String(input).endsWith("/publish-capabilities")
+            ? jsonResponse({ error: { message: serverMessage } }, status)
+            : jsonResponse({}),
+        ),
+      );
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+      const reporter = new TraceOptixReporter({
+        junitFile: "reports/junit.xml",
+        bundle: { outputDir: "portable-output" },
+      });
+      reporter.onBegin(config(directory), { allTests: () => [testCase()] });
+      await mkdir(join(directory, "reports"), { recursive: true });
+      await writeFile(
+        join(directory, "reports", "junit.xml"),
+        '<testsuites><testsuite><testcase name="offline"/></testsuite></testsuites>',
+      );
+      await reporter.onExit();
+
+      const warnings = stderr.mock.calls.flat().join("");
+      // The original message still prints for every failure, including these three anticipated
+      // causes — the plain-language block is additional, not a replacement.
+      expect(warnings).toContain(`Could not resolve the project publishing mode: ${serverMessage}`);
+      expect(warnings).toContain(headline);
+      expect(warnings).toContain(nextStep);
+    },
+  );
+
+  it("falls back to the raw server message for a capability failure that isn't 401/403/404", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/publish-capabilities")
+          ? jsonResponse({ error: { message: "internal server error" } }, 500)
+          : jsonResponse({}),
+      ),
+    );
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    const reporter = new TraceOptixReporter({
+      junitFile: "reports/junit.xml",
+      bundle: { outputDir: "portable-output" },
+    });
+    reporter.onBegin(config(directory), { allTests: () => [testCase()] });
+    await mkdir(join(directory, "reports"), { recursive: true });
+    await writeFile(
+      join(directory, "reports", "junit.xml"),
+      '<testsuites><testsuite><testcase name="offline"/></testsuite></testsuites>',
+    );
+    await reporter.onExit();
+
+    const warnings = stderr.mock.calls.flat().join("");
+    expect(warnings).toContain(
+      "Could not resolve the project publishing mode: internal server error",
+    );
+  });
+
   it.each([false, true])("publishes only aggregates in Summary-only mode (presence=%s)", async (presence) => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     vi.stubGlobal(
@@ -440,6 +524,7 @@ describe("TraceOptixReporter", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
@@ -447,16 +532,17 @@ describe("TraceOptixReporter", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     const output = stderr.mock.calls.flat().join("");
     expect(output).toContain("TraceOptix reporter is not configured");
-    expect(output).toContain("Missing configuration: TRACEOPTIX_TOKEN");
+    expect(output).toContain("Required publishing configuration: missing TRACEOPTIX_TOKEN");
     expect(output).toContain("TRACEOPTIX_URL=https://traceoptix.example.com");
-    expect(output).toContain("TRACEOPTIX_RUN_NAME=checkout-e2e");
-    expect(output).toContain("TRACEOPTIX_CI_JOB_URL=https://ci.example/jobs/12001");
+    expect(output).not.toContain("TRACEOPTIX_RUN_NAME");
+    expect(output).not.toContain("TRACEOPTIX_CI_");
+    expect(stdout.mock.calls.flat().join("")).not.toContain("Optional suggestions");
     expect(output).toContain("withTraceOptixDefaults");
     expect(output).toContain("['@traceoptix/playwright', { junitFile }]");
     expect(output).toContain("Setup guide:");
   });
 
-  it("reports missing run and CI context without blocking publication", () => {
+  it("suggests optional run and CI context on stdout without warning or blocking publication", () => {
     const fetchMock = vi.fn(
       async () =>
         new Promise<Response>(() => {
@@ -465,13 +551,17 @@ describe("TraceOptixReporter", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     const reporter = new TraceOptixReporter({ junitFile: "reports/junit.xml" });
     reporter.onBegin(config(directory), { allTests: () => [] });
 
-    const output = stderr.mock.calls.flat().join("");
+    const output = stdout.mock.calls.flat().join("");
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(output).toContain("TraceOptix run context is incomplete; publishing will continue");
+    expect(stderr).not.toHaveBeenCalled();
+    expect(output).toContain("Required publishing settings are configured");
+    expect(output).toContain("optional; no action is required to publish");
+    expect(output).not.toContain("Missing configuration");
     expect(output).toContain("TRACEOPTIX_RUN_NAME (or reporter name option)");
     expect(output).toContain("TRACEOPTIX_CI_BUILD_ID or TRACEOPTIX_CI_BUILD_NUMBER");
     expect(output).toContain("TRACEOPTIX_CI_JOB_NAME");

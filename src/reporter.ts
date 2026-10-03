@@ -186,9 +186,6 @@ export default class TraceOptixReporter {
       startedAt,
       first(this.options.namePattern, reporterEnv("RUN_NAME_PATTERN")),
     );
-    const missingContext = missingRunContext(configuredRunName, ci);
-    if (missingContext.length > 0)
-      this.runContextWarning(missingContext, runName);
     const runTags = resolveRunTags(
       reporterEnv("RUN_TAGS"),
       this.options.tags,
@@ -257,6 +254,9 @@ export default class TraceOptixReporter {
       source: publishSettings.baseUrlSource,
     };
     this.reportPublishingPlan(publishSettings, paths);
+    const missingContext = missingRunContext(configuredRunName, ci);
+    if (missingContext.length > 0)
+      this.runContextSuggestions(missingContext, runName);
 
     const client = new TraceOptixClient(
       publishSettings.baseUrl,
@@ -369,9 +369,7 @@ export default class TraceOptixReporter {
         // Unknown policy must never cause the reporter to leak details to an older or failing
         // server. The Playwright command remains warning-only, as publishing always has been.
         this.publishFailed = true;
-        this.warn(
-          `Could not resolve the project publishing mode: ${safeErrorMessage(error)}`,
-        );
+        this.reportCapabilityFailure(error, publishSettings.project);
         // Capability failure must still enter the ordinary full-detail capture path. No data is
         // sent to an unknown server policy, but steps and evidence remain available in the ZIP.
         createPortableBundle();
@@ -825,7 +823,7 @@ export default class TraceOptixReporter {
     const token = first(reporterEnv("TOKEN"));
     const project = first(this.options.project, reporterEnv("PROJECT"));
     const missing = [
-      !baseUrl ? "TRACEOPTIX_URL" : undefined,
+      !baseUrl ? "TRACEOPTIX_URL (or reporter url option)" : undefined,
       !token ? "TRACEOPTIX_TOKEN" : undefined,
       !project ? "TRACEOPTIX_PROJECT (or reporter project option)" : undefined,
     ].filter((value): value is string => value !== undefined);
@@ -888,6 +886,43 @@ export default class TraceOptixReporter {
     process.stderr.write(
       `[traceoptix] Warning: ${safeErrorMessage(message)}\n`,
     );
+  }
+
+  /**
+   * The original "could not resolve" line always prints first — it names the exact server
+   * response, which matters for anyone grepping logs or filing a support request, and it is the
+   * only line at all for a failure outside the three anticipated causes below. Those three
+   * (401/403/404) also get a plain-language block appended, because the raw server message alone
+   * is guesswork for whoever reads it — most sharply for 404, where the server deliberately
+   * returns the identical "unknown project" whether a project key is merely misspelled or
+   * genuinely owned by a different organisation, so that a token cannot use this endpoint to
+   * discover project keys outside its own org. This is the only place left that can turn that
+   * ambiguity into a next step, since whoever reads this output can actually check both sides of
+   * the mismatch.
+   */
+  private reportCapabilityFailure(error: unknown, project: string): void {
+    this.warn(`Could not resolve the project publishing mode: ${safeErrorMessage(error)}`);
+    if (!(error instanceof HttpError)) return;
+    if (error.status === 404) {
+      this.warningLines([
+        `Could not publish to TraceOptix: project "${project}" was not found for this token's organisation.`,
+        "The same error appears whether the project key is misspelled or belongs to a different " +
+          "organisation — by design, so a token cannot be used to discover project keys outside its own org.",
+        `Check that TRACEOPTIX_TOKEN was minted for the organisation that owns "${project}", and that ` +
+          "'project' (or TRACEOPTIX_PROJECT) is the project's key, not its display name.",
+      ]);
+    } else if (error.status === 403) {
+      this.warningLines([
+        `Could not publish to TraceOptix: this token is not valid for project "${project}".`,
+        "A project-scoped token only publishes for the project it was minted for. Mint one for " +
+          `"${project}", or use an organisation-wide token.`,
+      ]);
+    } else if (error.status === 401) {
+      this.warningLines([
+        "Could not publish to TraceOptix: TRACEOPTIX_TOKEN is invalid, expired or revoked.",
+        "Mint a replacement and update the environment or CI secret store that supplies it.",
+      ]);
+    }
   }
 
   private reportPublishingPlan(
@@ -986,18 +1021,11 @@ export default class TraceOptixReporter {
   private configurationWarning(reason: string): void {
     const lines = [
       "TraceOptix reporter is not configured; this run will not be published.",
-      `Missing configuration: ${reason.replace(/^missing\s+/, "")}.`,
-      "Configure the environment:",
+      `Required publishing configuration: ${reason}.`,
+      "Set TRACEOPTIX_TOKEN in the environment. Set the URL and project using environment variables or reporter options:",
       "  TRACEOPTIX_URL=https://traceoptix.example.com",
       "  TRACEOPTIX_TOKEN=td_...",
       "  TRACEOPTIX_PROJECT=checkout-web",
-      "Configure run and CI context (recommended):",
-      "  TRACEOPTIX_RUN_NAME=checkout-e2e",
-      "  TRACEOPTIX_CI_PROVIDER=github",
-      "  TRACEOPTIX_CI_BUILD_NUMBER=84",
-      "  TRACEOPTIX_CI_PIPELINE_NAME='Nightly regression'",
-      "  TRACEOPTIX_CI_JOB_NAME=playwright-chromium",
-      "  TRACEOPTIX_CI_JOB_URL=https://ci.example/jobs/12001",
       "Configure playwright.config.ts with evidence defaults plus the JUnit and TraceOptix reporters:",
       "  import { withTraceOptixDefaults } from '@traceoptix/playwright';",
       "  const junitFile = 'test-results/junit.xml';",
@@ -1022,16 +1050,16 @@ export default class TraceOptixReporter {
     );
   }
 
-  /** Missing labels should be discoverable without making observability break the test command. */
-  private runContextWarning(missing: readonly string[], runName: string): void {
+  /** Optional metadata suggestions belong on stdout, after publishing settings are validated. */
+  private runContextSuggestions(missing: readonly string[], runName: string): void {
     const lines = [
-      "TraceOptix run context is incomplete; publishing will continue.",
-      `Missing configuration: ${missing.join(", ")}.`,
+      "Required publishing settings are configured. Run and CI metadata below are optional; no action is required to publish.",
+      `Optional suggestions: ${missing.join(", ")}.`,
       `Run name for this publication: ${runName}.`,
-      "Set reporter options (name, ci) or the corresponding TRACEOPTIX_RUN_NAME and TRACEOPTIX_CI_* environment variables.",
+      "For more descriptive run labels and CI links, set reporter options (name, ci) or the corresponding environment variables. Supported CI providers are detected automatically.",
       `Setup guide: ${CONFIGURATION_GUIDE}`,
     ];
-    process.stderr.write(
+    process.stdout.write(
       `${lines.map((line) => `[traceoptix] ${line}`).join("\n")}\n`,
     );
   }
