@@ -21,7 +21,7 @@ import { detectMetadata, resolveCiContext } from "./metadata.js";
 import { prepareTestPriorities, priorityTagsEnabled } from "./priorities.js";
 import { formatRunName } from "./run-name.js";
 import { resolveRunTags } from "./run-tags.js";
-import { prepareSteps } from "./steps.js";
+import { addCurlAnnotations, prepareSteps } from "./steps.js";
 import type {
   ReporterFullConfig,
   ReporterSuite,
@@ -669,6 +669,7 @@ export default class TraceOptixReporter {
       (message) => this.warn(message),
       steps.stepIdForAttachment,
     );
+    addCurlAnnotations(steps.batch, attachments);
     if (this.bundle) {
       try {
         await this.bundle.addAttempt({

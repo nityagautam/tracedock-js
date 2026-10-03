@@ -2,6 +2,7 @@ import type { PlannedStep } from "./step-plan.js";
 import { randomUUID } from "node:crypto";
 import { basename, relative, resolve } from "node:path";
 import { junitSuiteName } from "./attachments.js";
+import type { PreparedAttachment } from "./attachments.js";
 import type {
   ReporterAttachment,
   ReporterTestCase,
@@ -37,6 +38,45 @@ export interface PreparedSteps {
   stepIdForAttachment(attachment: ReporterAttachment): string | undefined;
 }
 
+/** Reuse the already-sanitized attachment for inline display and portable ZIP recovery. */
+export function addCurlAnnotations(
+  batch: StepBatch | null,
+  attachments: readonly PreparedAttachment[],
+): void {
+  if (!batch) return;
+  const steps = new Map(batch.steps.map((step) => [step.id, step]));
+  const suffix =
+    "\n# Preview truncated; download the cURL text attachment for the full command.";
+  for (const attachment of attachments) {
+    const { name, stepId, contentType } = attachment.declaration;
+    if (
+      !stepId ||
+      contentType !== "text/plain" ||
+      !/^api-\d+\.curl(?:-\d+)?\.txt$/.test(name)
+    )
+      continue;
+    const step = steps.get(stepId);
+    if (!step || (step.annotations?.length ?? 0) >= 100) continue;
+    const curl = attachment.body.toString("utf8").trim();
+    if (!curl) continue;
+    const description =
+      curl.length > 2_000
+        ? curl.slice(0, 2_000 - suffix.length) + suffix
+        : curl;
+    if (
+      step.annotations?.some(
+        (annotation) =>
+          annotation.type === "curl" && annotation.description === description,
+      )
+    )
+      continue;
+    step.annotations = [
+      ...(step.annotations ?? []),
+      { type: "curl", description },
+    ];
+  }
+}
+
 /** Flatten Playwright's complete nested step tree while retaining parent identities. */
 export function prepareSteps(
   test: ReporterTestCase,
@@ -70,7 +110,7 @@ export function prepareSteps(
       category: (step.category.trim() || "unknown").slice(0, 128),
       status: step.error
         ? "failed"
-        : step.annotations.some((annotation) => annotation.type === "skip")
+        : step.annotations?.some((annotation) => annotation.type === "skip")
           ? "skipped"
           : "passed",
       ...(Number.isFinite(step.duration) && step.duration >= 0
@@ -104,7 +144,7 @@ export function prepareSteps(
             },
           }
         : {}),
-      ...(step.annotations.length > 0
+      ...(step.annotations?.length
         ? {
             annotations: step.annotations.slice(0, 100).map((annotation) => ({
               type: annotation.type.slice(0, 128),
@@ -134,6 +174,11 @@ export function prepareSteps(
   }
 
   const suite = junitSuiteName(test, rootDir);
+  const internalStepIds = new Set(
+    declarations
+      .filter((step) => step.category === "hook" || step.category === "fixture")
+      .map((step) => step.id),
+  );
   return {
     batch:
       declarations.length === 0
@@ -144,9 +189,18 @@ export function prepareSteps(
             attempt: result.retry,
             steps: declarations,
           },
-    stepIdForAttachment: (attachment) =>
-      attachmentReferences.get(attachment) ??
-      attachmentIdentities.get(attachmentIdentity(attachment)),
+    stepIdForAttachment: (attachment) => {
+      const id = attachmentReferences.get(attachment) ??
+        attachmentIdentities.get(attachmentIdentity(attachment));
+      // Playwright emits automatic test media during teardown. Keep it visible
+      // on the test instead of burying it inside a hook or context fixture.
+      if (id && internalStepIds.has(id) &&
+          ((attachment.name === "screenshot" && attachment.contentType.startsWith("image/")) ||
+           (attachment.name === "video" && attachment.contentType.startsWith("video/")))) {
+        return undefined;
+      }
+      return id;
+    },
   };
 }
 

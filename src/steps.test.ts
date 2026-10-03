@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { prepareSteps } from "./steps.js";
+import { addCurlAnnotations, prepareSteps } from "./steps.js";
+import type { PreparedAttachment } from "./attachments.js";
 import type {
   ReporterAttachment,
   ReporterTestCase,
@@ -21,6 +22,103 @@ const test: ReporterTestCase = {
 };
 
 describe("Playwright step preparation", () => {
+  it("keeps automatic teardown media at test level and explicit step media on its step", () => {
+    const screenshot = { name: "screenshot", contentType: "image/png", path: "/results/failure.png" };
+    const video = { name: "video", contentType: "video/webm", path: "/results/video.webm" };
+    const explicit = { name: "screenshot", contentType: "image/png", path: "/results/explicit.png" };
+    const prepared = prepareSteps(test, {
+      retry: 0,
+      attachments: [screenshot, video, explicit],
+      steps: [
+        step("Inspect page", "test.step", { attachments: [explicit] }),
+        step("After Hooks", "hook", {
+          attachments: [screenshot],
+          steps: [step('Fixture "context"', "fixture", { attachments: [video] })],
+        }),
+      ],
+    }, "/repo", vi.fn());
+    expect(prepared.stepIdForAttachment(screenshot)).toBeUndefined();
+    expect(prepared.stepIdForAttachment({ ...video })).toBeUndefined();
+    expect(prepared.stepIdForAttachment(explicit)).toBe(prepared.batch!.steps[0]!.id);
+    expect(prepared.batch!.steps).toHaveLength(3);
+  });
+  it("adds bounded inline cURL without changing downloads, other annotations or unrelated steps", () => {
+    const prepared = prepareSteps(
+      test,
+      {
+        retry: 0,
+        attachments: [],
+        steps: [
+          step("API POST", "test.step", {
+            annotations: [{ type: "note", description: "Keep me" }],
+          }),
+          step("API GET", "test.step"),
+        ],
+      },
+      "/repo",
+      vi.fn(),
+    );
+    const api = prepared.batch!.steps[0]!;
+    const fullCurl = `curl --data-raw '${"x".repeat(3000)}'`;
+    const attachment: PreparedAttachment = {
+      declaration: {
+        kind: "log",
+        name: "api-1.curl.txt",
+        contentType: "text/plain",
+        bytes: Buffer.byteLength(fullCurl),
+        test: test.title,
+        attempt: 0,
+        stepId: api.id,
+      },
+      body: Buffer.from(fullCurl),
+    };
+    addCurlAnnotations(prepared.batch, [attachment]);
+    addCurlAnnotations(prepared.batch, [attachment]);
+    expect(api.annotations).toHaveLength(2);
+    expect(api.annotations?.[0]).toEqual({
+      type: "note",
+      description: "Keep me",
+    });
+    expect(api.annotations?.[1]?.description).toHaveLength(2000);
+    expect(api.annotations?.[1]?.description).toContain(
+      "Preview truncated; download",
+    );
+    expect(attachment.body.toString()).toBe(fullCurl);
+    expect(prepared.batch!.steps[1]!.annotations).toBeUndefined();
+    api.annotations = Array.from({ length: 100 }, () => ({ type: "note" }));
+    addCurlAnnotations(prepared.batch, [attachment]);
+    expect(api.annotations).toHaveLength(100);
+  });
+  it("captures ordinary non-BDD steps on versions without step annotations", () => {
+    const prepared = prepareSteps(
+      test,
+      {
+        retry: 0,
+        attachments: [],
+        steps: [
+          step("Create customer", "test.step", {
+            annotations: undefined,
+            steps: [
+              step("apiRequestContext.post", "pw:api", {
+                annotations: undefined,
+              }),
+              step("expect.toBe", "expect", { annotations: undefined }),
+            ],
+          }),
+        ],
+      },
+      "/repo",
+      vi.fn(),
+    );
+    expect(prepared.batch?.steps.map((s) => [s.title, s.status])).toEqual([
+      ["Create customer", "passed"],
+      ["apiRequestContext.post", "passed"],
+      ["expect.toBe", "passed"],
+    ]);
+    expect(prepared.batch?.steps[1]?.parentId).toBe(
+      prepared.batch?.steps[0]?.id,
+    );
+  });
   it("records every category, hierarchy, failure, and originating attachment", () => {
     const screenshot: ReporterAttachment = {
       name: "confirmation",

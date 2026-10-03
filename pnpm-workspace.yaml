@@ -1,2 +1,5 @@
+packages:
+  - examples/plain
+  - examples/bdd
 allowBuilds:
   esbuild: true

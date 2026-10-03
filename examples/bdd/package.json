@@ -1,0 +1,19 @@
+{
+  "name": "@traceoptix/example-wikipedia-bdd",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "npm --prefix ../.. run build",
+    "test": "bddgen && playwright test",
+    "test:api": "npm test -- --project api",
+    "test:ui": "npm test -- --project chromium",
+    "list": "npm test -- --list",
+    "report": "playwright show-report playwright-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@traceoptix/playwright": "file:../..",
+    "playwright-bdd": "9.2.1"
+  }
+}

@@ -2,6 +2,10 @@
 
 Source development lives in the standalone `traceoptix-playwright` repository. Run `pnpm install --frozen-lockfile`, `pnpm build`, `pnpm typecheck`, and `pnpm test` from this directory. See [local development](LOCAL_DEVELOPMENT.md) for packing and installation.
 
+Runnable [Wikipedia examples](examples/README.md) cover plain Playwright and Playwright BDD,
+with API/UI tests, cURL evidence, ordinary and BDD steps, and deliberate failures.
+Each example has its own `package.json`; a root workspace install supplies both projects.
+
 Publish Playwright JUnit results, the complete test-step tree, screenshots, videos, traces, HAR
 files and logs to TraceOptix. Evidence is linked to the testcase, retry and originating step that
 produced it. Publishing is warning-only: a TraceOptix or object-storage outage never changes
@@ -237,6 +241,93 @@ test project without re-minting the token to match.
 The reporter can show that guidance only after it has been registered in `playwright.config.ts`.
 If `@traceoptix/playwright` is absent from the reporter list, Playwright never loads it and no
 package code can print a configuration message.
+
+## API evidence and ordinary test steps
+
+BDD is not required for step reporting. The reporter collects executed `test.step` calls,
+Playwright API/browser operations, assertions, fixtures and hooks, with hierarchy, status,
+timing, source location, errors and linked attachments. Plain JavaScript needs an explicit
+`test.step` to appear as a named operation. Unexecuted ordinary JavaScript steps cannot be
+inferred; planned skipped BDD steps remain a separate feature.
+
+Automatic screenshots and videos captured during Playwright teardown are published as
+test-level evidence. Media explicitly attached inside a test step stays linked to that step.
+
+For API request/response evidence and cURL templates, opt in with the supplied test fixture.
+Keep the JUnit and TraceOptix reporters configured as above:
+
+```ts
+import { test, expect } from "@traceoptix/playwright/test";
+
+test.use({
+  baseURL: "https://api.example.com",
+  traceoptixApi: {
+    redactFields: ["email", "customerId"],
+    maxBodyBytes: 64 * 1024,
+    maxRequests: 100,
+  },
+});
+
+test("creates an order", async ({ request }) => {
+  await test.step("Create order", async () => {
+    const response = await request.post("/orders", {
+      data: { product: "book", quantity: 1 },
+    });
+    expect(response.status()).toBe(201);
+  });
+});
+```
+
+The `request` fixture captures `get`, `post`, `put`, `patch`, `delete`, `head` and `fetch`.
+Each captured call gets an `API METHOD` step with `api-N.json` and `api-N.curl.txt` attachments.
+TraceOptix also displays the sanitized cURL directly in that step's expanded details while keeping
+the text attachment downloadable. Inline commands are limited to 2,000 characters; longer commands
+show a truncation notice pointing to the complete text download. This metadata is included in both
+live publication and portable bundles. Earlier uploads are unchanged; rerun to populate inline cURL.
+JSON includes the supplied request method, resolved URL, headers, sanitized JSON/form body,
+response status, headers and JSON body, start time, and duration. Original responses and thrown
+errors are preserved; attachment failures do not fail the test. HTTP error statuses follow
+Playwright's normal `failOnStatusCode` behavior. Passing and failing attempts retain evidence,
+with retries linked separately. Playwright 1.50 falls back to test-level attachments; newer
+versions attach directly to the API step.
+
+This wraps the API `request` fixture, not browser network traffic, global `fetch`, Axios, or
+contexts created elsewhere. For existing custom fixtures or `page.request`/`context.request`,
+wrap the context explicitly and call through the returned object:
+
+```ts
+import { captureApiRequests } from "@traceoptix/playwright";
+
+const api = captureApiRequests(customContext, testInfo, {
+  baseURL: "https://api.example.com",
+  redactFields: ["email"],
+});
+await api.get("/orders");
+```
+
+The helper does not dispose or modify the supplied context. Its attachments are test-level unless
+an optional fourth `ApiStepRunner` argument supplies a step attachment sink. Supply the context's
+`baseURL` and `extraHTTPHeaders` for evidence; hidden context defaults cannot be inspected.
+
+Redaction happens before these new attachments are saved. Authorization, cookies, passwords,
+secrets, tokens, API keys, credentials, signatures and session fields are redacted by field name,
+case-insensitively, including nested JSON and query/form fields. `redactFields` adds application
+fields. This is field-based redaction, not detection of secrets inside arbitrary values. Existing
+Playwright traces, JUnit, logs and user attachments retain their own capture behavior.
+
+Bodies over the limit are omitted rather than partially exposed. Defaults are 64 KiB per direction
+and 100 captured exchanges per wrapper/test, with hard caps of 1 MiB and 1,000 exchanges.
+Unstructured text, binary and multipart bodies are omitted; streams/files are never read for
+evidence. Playwright already buffers API responses; inspecting JSON may read that buffer when its
+size is not advertised, but only bodies within the limit are retained. Set
+`traceoptixApi: { enabled: false }` to disable fixture capture.
+
+cURL attachments are POSIX-shell-quoted templates, not exact wire replays. Automatic cookie-jar
+credentials, redirects and transport-added headers are not reconstructed. Replace redacted
+credentials and supply any omitted body before replay. The plugin never executes the cURL.
+Full details publication uploads this evidence through the existing attachment pipeline.
+Summary-only publication sends no attachments or steps; the opted-in fixture still creates local
+Playwright attachments, just as Playwright can still write a user-configured local trace.
 
 ## Options
 

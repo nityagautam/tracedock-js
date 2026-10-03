@@ -80,7 +80,7 @@ export interface ReporterTestStep {
   startTime: Date;
   error?: ReporterTestError;
   location?: { file: string; line?: number; column?: number };
-  annotations: Array<{ type: string; description?: string }>;
+  annotations?: Array<{ type: string; description?: string }>;
   attachments: ReporterAttachment[];
   steps: ReporterTestStep[];
 }

@@ -14,6 +14,7 @@
     "traceoptix"
   ],
   "type": "module",
+  "workspaces": ["examples/plain", "examples/bdd"],
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -22,6 +23,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./dist/test.d.cts",
+      "import": "./dist/test.cjs",
+      "require": "./dist/test.cjs",
+      "default": "./dist/test.cjs"
     }
   },
   "files": [
@@ -32,10 +39,14 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.typecheck.json",
-    "test": "vitest run",
+    "typecheck": "npm run build && tsc -p tsconfig.typecheck.json",
+    "test": "npm run build && vitest run src",
+    "examples:typecheck": "npm run build && tsc -p tsconfig.examples.json",
+    "examples:check": "npm run examples:typecheck && bddgen --config examples/bdd/playwright.config.ts && playwright test --config examples/plain/playwright.config.ts --list && playwright test --config examples/bdd/playwright.config.ts --list",
+    "example:plain": "npm run build && playwright test --config examples/plain/playwright.config.ts",
+    "example:bdd": "npm run build && bddgen --config examples/bdd/playwright.config.ts && playwright test --config examples/bdd/playwright.config.ts",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run typecheck && npm test && npm run examples:check"
   },
   "engines": {
     "node": ">=20"
@@ -49,7 +60,9 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "^26.1.2",
+    "playwright-bdd": "9.2.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   },
